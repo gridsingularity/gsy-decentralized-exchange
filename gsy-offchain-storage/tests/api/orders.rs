@@ -1,4 +1,4 @@
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
 use actix_web::web;
 use mongodb::bson::{doc, to_bson, Bson};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
@@ -256,7 +256,7 @@ async fn post_orders_persists_order_to_the_db() {
     let update_result = db
         .get_ref()
         .orders()
-        .update_order_status_by_id(&saved_id, OrderStatus::Executed, 1_100)
+        .update_order_status_by_id(&saved_id, OrderStatus::Executed, ts(1_100))
         .await
         .unwrap();
     assert_eq!(update_result.modified_count, 1);
@@ -269,7 +269,7 @@ async fn post_orders_persists_order_to_the_db() {
         .unwrap()
         .unwrap();
     assert_eq!(updated.status, OrderStatus::Executed);
-    assert_eq!(updated.status_updated_at, Some(1_100));
+    assert_eq!(updated.status_updated_at, Some(ts(1_100)));
     stop_app(app).await;
 }
 
@@ -378,17 +378,17 @@ async fn filter_orders_by_market_and_time_range() {
     let by_range = db
         .get_ref()
         .orders()
-        .filter_orders(Some(market_a.to_string()), Some(20), Some(30))
+        .filter_orders(Some(market_a.to_string()), Some(ts(20)), Some(ts(30)))
         .await
         .unwrap();
     assert_eq!(by_range.len(), 1);
-    assert_eq!(by_range[0].time_slot, 20);
+    assert_eq!(by_range[0].time_slot, ts(20));
 
     // Start-only bound: time_slot >= 20 across all markets -> 3 orders.
     let start_only = db
         .get_ref()
         .orders()
-        .filter_orders(None, Some(20), None)
+        .filter_orders(None, Some(ts(20)), None)
         .await
         .unwrap();
     assert_eq!(start_only.len(), 3);
@@ -397,11 +397,11 @@ async fn filter_orders_by_market_and_time_range() {
     let end_only = db
         .get_ref()
         .orders()
-        .filter_orders(None, None, Some(20))
+        .filter_orders(None, None, Some(ts(20)))
         .await
         .unwrap();
     assert_eq!(end_only.len(), 1);
-    assert_eq!(end_only[0].time_slot, 10);
+    assert_eq!(end_only[0].time_slot, ts(10));
 
     stop_app(app).await;
 }
@@ -441,45 +441,45 @@ async fn filter_orders_time_boundaries_are_inclusive_start_exclusive_end() {
 
     // [20, 30): start inclusive, end exclusive -> {20, 29}.
     let both = orders_svc()
-        .filter_orders(Some(market.to_string()), Some(20), Some(30))
+        .filter_orders(Some(market.to_string()), Some(ts(20)), Some(ts(30)))
         .await
         .unwrap();
-    let mut got: Vec<u64> = both.iter().map(|o| o.time_slot).collect();
+    let mut got: Vec<i64> = both.iter().map(|o| o.time_slot.timestamp()).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 30 - 1]); // {20, 29}: 20 included, 30 excluded
 
     // Start-only, start on a boundary value: time_slot >= 20 -> {20, 29, 30}.
     let start_only = orders_svc()
-        .filter_orders(Some(market.to_string()), Some(20), None)
+        .filter_orders(Some(market.to_string()), Some(ts(20)), None)
         .await
         .unwrap();
-    let mut got: Vec<u64> = start_only.iter().map(|o| o.time_slot).collect();
+    let mut got: Vec<i64> = start_only.iter().map(|o| o.time_slot.timestamp()).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29, 30]); // 20 included (>=), nothing below
 
     // End-only, end on a boundary value: time_slot < 30 -> {19, 20, 29}.
     let end_only = orders_svc()
-        .filter_orders(Some(market.to_string()), None, Some(30))
+        .filter_orders(Some(market.to_string()), None, Some(ts(30)))
         .await
         .unwrap();
-    let mut got: Vec<u64> = end_only.iter().map(|o| o.time_slot).collect();
+    let mut got: Vec<i64> = end_only.iter().map(|o| o.time_slot.timestamp()).collect();
     got.sort_unstable();
     assert_eq!(got, vec![19, 20, 29]); // 30 excluded (<)
 
     // Empty range: start == end -> nothing (20 fails $lt 20).
     let empty = orders_svc()
-        .filter_orders(Some(market.to_string()), Some(20), Some(20))
+        .filter_orders(Some(market.to_string()), Some(ts(20)), Some(ts(20)))
         .await
         .unwrap();
     assert!(empty.is_empty()); // [20, 20) is empty
 
     // Single-slot range: [20, 21) -> exactly {20}.
     let single = orders_svc()
-        .filter_orders(Some(market.to_string()), Some(20), Some(21))
+        .filter_orders(Some(market.to_string()), Some(ts(20)), Some(ts(21)))
         .await
         .unwrap();
     assert_eq!(single.len(), 1);
-    assert_eq!(single[0].time_slot, 20);
+    assert_eq!(single[0].time_slot, ts(20));
 
     stop_app(app).await;
 }

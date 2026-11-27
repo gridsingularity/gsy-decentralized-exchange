@@ -1,4 +1,5 @@
 use anyhow::{ensure, Result};
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::{
     profiles::MeasurementSchema,
     trades::{DbTradeSchema, TradeStatus},
@@ -46,7 +47,7 @@ pub fn compute_penalties(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
-    delivery_slot: u64,
+    delivery_slot: DateTime<Utc>,
     penalty_rate: f64,
     penalty_tolerance_percent: f64,
 ) -> Result<Vec<Penalty>> {
@@ -97,7 +98,7 @@ pub fn compute_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
-    delivery_slot: u64,
+    delivery_slot: DateTime<Utc>,
     penalty_rate: f64,
     penalty_tolerance_percent: f64,
 ) -> Result<Vec<DeliveryVerification>> {
@@ -120,7 +121,7 @@ pub fn compute_final_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
-    delivery_slot: u64,
+    delivery_slot: DateTime<Utc>,
     penalty_rate: f64,
     penalty_tolerance_percent: f64,
 ) -> Result<Vec<DeliveryVerification>> {
@@ -139,7 +140,7 @@ fn delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
-    delivery_slot: u64,
+    delivery_slot: DateTime<Utc>,
     penalty_rate: f64,
     penalty_tolerance_percent: f64,
     grace_period_over: bool,

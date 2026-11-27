@@ -1,4 +1,5 @@
 import requests
+from datetime import datetime, timezone
 from pendulum import DateTime, now
 import uuid
 
@@ -6,15 +7,20 @@ import uuid
 def _random_hex_str():
     return str(uuid.uuid4().hex)
 
+def _rfc3339(timestamp):
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
 def post_market(market_id, time_slot, creation_time):
     return requests.post(url + "/markets", json={
-        "market_id": market_id,
-        "community_id": "communityid_1",
-        "opening_time": str(creation_time).zfill(20),
-        "closing_time": str(time_slot).zfill(20),
-        "delivery_start_time": str(time_slot).zfill(20),
-        "delivery_end_time": str(time_slot + 900).zfill(20),
-        "market_type": "Spot",
+        "marketId": market_id,
+        "communityId": "communityid_1",
+        "openingTime": _rfc3339(creation_time),
+        "closingTime": _rfc3339(time_slot),
+        "deliveryStartTime": _rfc3339(time_slot),
+        "deliveryEndTime": _rfc3339(time_slot + 900),
+        "marketType": "spot",
+        "matchingAlgorithm": "pay_as_clear",
+        "createdAt": _rfc3339(creation_time),
     })
 
 
@@ -76,7 +82,7 @@ def post_measurements(area_uuid, time_slot, _creation_time, energy):
     }])
     requests.post(url + "/timeseries", json=[{
         "measurement_point": measurement_point,
-        "timestamp": str(time_slot).zfill(20),
+        "timestamp": _rfc3339(time_slot),
         "value": energy
     }])
 
@@ -97,7 +103,7 @@ def post_forecasts(area_uuid, time_slot, _creation_time, energy):
     }])
     requests.post(url + "/timeseries", json=[{
         "measurement_point": measurement_point,
-        "timestamp": str(time_slot).zfill(20),
+        "timestamp": _rfc3339(time_slot),
         "value": energy
     }])
 
@@ -113,7 +119,7 @@ if __name__ == '__main__':
     for i in range(96):
         creation_time = int(now().timestamp())
         time_slot = start_timestamp + (15 * 60 * i)
-        market_id = _random_hex_str()
+        market_id = str(uuid.uuid4())
 
         resp = post_market(market_id, time_slot, creation_time)
         post_trade(trade_index, order_index, market_id, time_slot, creation_time, 1, 2)

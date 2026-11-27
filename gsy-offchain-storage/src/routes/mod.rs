@@ -17,15 +17,19 @@ pub use profiles::*;
 pub use trades::*;
 
 use actix_web::HttpResponse;
-use primitives::utils::opt_rfc3339_to_epoch;
+use chrono::{DateTime, Utc};
+use primitives::utils::opt_rfc3339_to_datetime;
 
-/// Parses optional RFC 3339 `start_time`/`end_time` query params into epoch seconds.
+/// Optional `(start_time, end_time)` bounds of a query.
+pub type TimeBounds = (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
+
+/// Parses optional RFC 3339 `start_time`/`end_time` query params.
 pub fn parse_time_range(
     start_time: Option<&str>,
     end_time: Option<&str>,
-) -> Result<(Option<u64>, Option<u64>), HttpResponse> {
+) -> Result<TimeBounds, HttpResponse> {
     let parse = |value| {
-        opt_rfc3339_to_epoch(value).map_err(|e| HttpResponse::BadRequest().body(e.to_string()))
+        opt_rfc3339_to_datetime(value).map_err(|e| HttpResponse::BadRequest().body(e.to_string()))
     };
     let (start, end) = (parse(start_time)?, parse(end_time)?);
     validate_start_end_time(start, end)?;

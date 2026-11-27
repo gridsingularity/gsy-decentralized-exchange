@@ -1,10 +1,9 @@
-use primitives::utils::EPOCH_RFC3339;
-use primitives::utils::now_epoch_secs;
+use chrono::{DateTime, Utc};
 use crate::guarantees_of_origin::{
     seed_certifiable_trade, SELLER_FACILITY as GOO_SELLER_FACILITY, SLOT as GOO_SLOT,
     VERDICT_AT as GOO_VERDICT_AT,
 };
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
 use gsy_offchain_storage::ewds_handler::{
     handle_request, start_ewds_request_handler, validate_trades_query_range, EwdsHandlerConfig,
     INVALID_TIME_RANGE, MAX_TRADES_QUERY_RANGE_SECS, OPERATION_TOPIC_MISMATCH,
@@ -24,8 +23,7 @@ use primitives::ewds::dto::{EwdsMeasurementDto, EwdsRequestEnvelope, EwdsSendMes
 use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use primitives::utils::{
-    bytes16_to_uuid_string, epoch_to_rfc3339,
-    rfc3339_to_epoch, timestamp_to_string_with_padding,
+    bytes16_to_uuid_string, epoch_to_rfc3339, rfc3339_to_datetime,
 };
 use serde_json::json;
 use std::time::Duration;
@@ -233,7 +231,7 @@ fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
         seller: "seller-1".to_string(),
         buyer: "buyer-1".to_string(),
         market_id: market_id.to_string(),
-        creation_time: TRADES_BASE_TIME,
+        creation_time: ts(TRADES_BASE_TIME),
         offer_hash: format!("{trade_uuid}-offer"),
         bid_hash: format!("{trade_uuid}-bid"),
         residual_offer_id: None,
@@ -263,8 +261,8 @@ async fn market_queries_accept_uuid_case_variants_over_http_and_ewds() {
                 energy_kWh: 1.0,
                 energy_rate: 10.0,
                 market_id: id.clone(),
-                time_slot: TRADES_BASE_TIME,
-                creation_time: TRADES_BASE_TIME,
+                time_slot: ts(TRADES_BASE_TIME),
+                creation_time: ts(TRADES_BASE_TIME),
                 requirements: None,
                 attributes: None,
             }])
@@ -287,7 +285,7 @@ async fn market_queries_accept_uuid_case_variants_over_http_and_ewds() {
                 traded_quantity: 1.0,
                 num_trades: 1,
                 tx_hash: "0xabc".to_string(),
-                clearing_time: TRADES_BASE_TIME,
+                clearing_time: ts(TRADES_BASE_TIME),
             })
             .await
             .unwrap();
@@ -385,7 +383,9 @@ async fn each_read_query_answers_storage_failures() {
                 "market_id": market_id,
                 "type": "Measurement",
                 "status": "executed",
-                "status_updated_at": TRADES_BASE_TIME as i64,
+                "status_updated_at": mongodb::bson::DateTime::from_millis(
+                    TRADES_BASE_TIME as i64 * 1000
+                ),
                 "offchain_id": "facility-a",
             })
             .await
@@ -470,13 +470,13 @@ fn make_delivery_market(market_id: &str, delivery_offset: u64) -> MarketSchema {
     MarketSchema {
         market_id: market_id.to_string(),
         community_id: COMMUNITY_1.to_string(),
-        opening_time: timestamp_to_string_with_padding(delivery_start_time - 900),
-        closing_time: timestamp_to_string_with_padding(delivery_start_time),
-        delivery_start_time: timestamp_to_string_with_padding(delivery_start_time),
-        delivery_end_time: timestamp_to_string_with_padding(delivery_start_time + 900),
+        opening_time: ts(delivery_start_time - 900),
+        closing_time: ts(delivery_start_time),
+        delivery_start_time: ts(delivery_start_time),
+        delivery_end_time: ts(delivery_start_time + 900),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: timestamp_to_string_with_padding(delivery_start_time - 900),
+        created_at: ts(delivery_start_time - 900),
     }
 }
 
@@ -584,26 +584,27 @@ async fn trades_query_inverted_range_publishes_error() {
 fn validate_trades_query_range_boundaries() {
     let day = MAX_TRADES_QUERY_RANGE_SECS;
     assert_eq!(
-        validate_trades_query_range(None, Some(0), Some(0)).unwrap(),
-        Some((0, 0))
+        validate_trades_query_range(None, Some(ts(0)), Some(ts(0))).unwrap(),
+        Some(ts(0)..ts(0))
     );
     assert_eq!(
-        validate_trades_query_range(None, Some(10), Some(10 + day - 1)).unwrap(),
-        Some((10, 10 + day - 1))
+        validate_trades_query_range(None, Some(ts(10)), Some(ts(10 + day - 1))).unwrap(),
+        Some(ts(10)..ts(10 + day - 1))
     );
     assert_eq!(
-        validate_trades_query_range(None, Some(10), Some(10 + day)).unwrap(),
-        Some((10, 10 + day))
+        validate_trades_query_range(None, Some(ts(10)), Some(ts(10 + day))).unwrap(),
+        Some(ts(10)..ts(10 + day))
     );
 
-    let too_large = validate_trades_query_range(None, Some(10), Some(10 + day + 1)).unwrap_err();
+    let too_large =
+        validate_trades_query_range(None, Some(ts(10)), Some(ts(10 + day + 1))).unwrap_err();
     assert_eq!(too_large.code, TIME_RANGE_TOO_LARGE);
     assert!(too_large.message.contains("86401s"));
 
     for (start, end) in [
-        (Some(11), Some(10)),
-        (None, Some(10)),
-        (Some(10), None),
+        (Some(ts(11)), Some(ts(10))),
+        (None, Some(ts(10))),
+        (Some(ts(10)), None),
         (None, None),
     ] {
         let error = validate_trades_query_range(None, start, end).unwrap_err();
@@ -624,10 +625,14 @@ fn validate_trades_query_range_needs_no_range_for_a_market() {
     );
     // A range sent with a market is still checked.
     assert_eq!(
-        validate_trades_query_range(market_id, Some(10), Some(20)).unwrap(),
-        Some((10, 20))
+        validate_trades_query_range(market_id, Some(ts(10)), Some(ts(20))).unwrap(),
+        Some(ts(10)..ts(20))
     );
-    for (start, end) in [(Some(11), Some(10)), (None, Some(10)), (Some(10), None)] {
+    for (start, end) in [
+        (Some(ts(11)), Some(ts(10))),
+        (None, Some(ts(10))),
+        (Some(ts(10)), None),
+    ] {
         let error = validate_trades_query_range(market_id, start, end).unwrap_err();
         assert_eq!(
             error.code, INVALID_TIME_RANGE,
@@ -772,7 +777,7 @@ async fn measurement_queries_preserve_signed_energy_over_http_and_ewds() {
             .timeseries()
             .insert_values(vec![TimeseriesSchema {
                 measurement_point: id,
-                timestamp: timestamp_to_string_with_padding(TRADES_BASE_TIME),
+                timestamp: ts(TRADES_BASE_TIME),
                 value: *value,
             }])
             .await
@@ -784,7 +789,7 @@ async fn measurement_queries_preserve_signed_energy_over_http_and_ewds() {
         "TEST_CLIENT_ID",
         "test",
     )
-    .fetch_measurements(TRADES_BASE_TIME, TRADES_BASE_TIME + 900)
+    .fetch_measurements(ts(TRADES_BASE_TIME), ts(TRADES_BASE_TIME + 900))
     .await
     .unwrap();
     handle_request(
@@ -819,7 +824,7 @@ async fn measurement_queries_preserve_signed_energy_over_http_and_ewds() {
                 .find(|m| m.facility_id == format!("meter-{index}"))
                 .unwrap();
             assert_eq!(measurement.energy_kwh, *expected);
-            assert_eq!(measurement.time_slot, TRADES_BASE_TIME);
+            assert_eq!(measurement.time_slot, ts(TRADES_BASE_TIME));
         }
     }
     stop_app(app).await;
@@ -893,13 +898,13 @@ async fn clearing_results_query_bad_payload_errors() {
     stop_app(app).await;
 }
 
-/// A market as stored from `NewMarketCreated`: `0x…` ID and zero-padded epoch
-/// seconds, delivering on 2026-03-28 at 10:00 UTC.
+/// A market as stored from `NewMarketCreated`: `0x…` ID and dates, delivering on
+/// 2026-03-28 at 10:00 UTC.
 const COMMUNITY_1: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const COMMUNITY_2: &str = "9b2c1f7a-5d3e-4c8b-a6f1-2e7d0c4b8a91";
 
 fn make_market(id_byte: u8, community_id: &str, opening_time: &str) -> MarketSchema {
-    let epoch = |time: &str| timestamp_to_string_with_padding(rfc3339_to_epoch(time).unwrap());
+    let epoch = |time: &str| rfc3339_to_datetime(time).unwrap();
     MarketSchema {
         market_id: bytes16_to_uuid_string(crate::helpers::entity_bytes(id_byte)),
         community_id: community_id.to_string(),
@@ -1106,7 +1111,7 @@ fn make_facility(facility_id: &str, facility_name: &str) -> FacilitySchema {
         facility_name: facility_name.to_string(),
         site_id: "site-1".to_string(),
         owner_id: "owner-1".to_string(),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -1193,7 +1198,7 @@ async fn facilities_query_returns_only_the_latest_entries() {
     let mut changed = make_facility("f1", "facility-1");
     changed.owner_id = "owner-2".to_string();
     let mut gone = make_facility("f2", "facility-2");
-    gone.valid_until = Some(epoch_to_rfc3339(now_epoch_secs()));
+    gone.valid_until = Some(Utc::now());
     facilities.store(vec![changed, gone]).await.unwrap();
 
     let env = envelope(
@@ -1220,7 +1225,7 @@ fn make_community(community_id: &str, community_name: &str) -> EnergyCommunitySc
         community_id: community_id.to_string(),
         community_name: community_name.to_string(),
         sites: vec!["site-1".to_string()],
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -1244,7 +1249,7 @@ async fn communities_query_returns_only_the_latest_entries() {
         .unwrap();
     // The first is renamed, the second is deleted.
     let mut gone = make_community(second, "Community 2");
-    gone.valid_until = Some(epoch_to_rfc3339(now_epoch_secs()));
+    gone.valid_until = Some(Utc::now());
     communities
         .store(vec![make_community(first, "Community 1 renamed"), gone])
         .await
@@ -1427,6 +1432,8 @@ async fn ids_query_success() {
     let data = captured_data(&server).await;
     // get_or_create returns exactly one mapping, sent as vec![data]
     assert_eq!(data.len(), 1);
+    rfc3339_to_datetime(data[0]["creation_time"].as_str().unwrap())
+        .expect("creation_time is RFC 3339");
     assert_eq!(
         data[0]["onchain_id"],
         json!(primitives::utils::derive_onchain_id("offchain-abc"))

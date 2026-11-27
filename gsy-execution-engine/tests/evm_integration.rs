@@ -4,11 +4,11 @@ use ::primitives::{
         market::MarketChainRecord,
         trades::{DbTradeSchema, TradeParameters, TradeStatus},
     },
-    ewds::dto::EwdsTradeDto,
+    ewds::dto::{EwdsMarketDto, EwdsTradeDto},
     offchain_storage::OffchainStorageTransport,
-    utils::{hex_to_bytes16,
-        bytes16_to_uuid_string, derive_onchain_id, epoch_to_rfc3339, uuid_v4_to_bytes16,
-        timestamp_to_string_with_padding,
+    utils::{
+        bytes16_to_uuid_string, derive_onchain_id, epoch_to_datetime, epoch_to_rfc3339,
+        hex_to_bytes16, uuid_v4_to_bytes16,
     },
 };
 use chrono::{DateTime, Duration, Utc};
@@ -252,7 +252,7 @@ fn late_trade(id: u8, market: u8, creation_time: u64) -> DbTradeSchema {
         seller: format!("bob-{id}"),
         buyer: format!("alice-{id}"),
         market_id: entity_id(market),
-        creation_time,
+        creation_time: epoch_to_datetime(creation_time).unwrap(),
         offer_hash: entity_id(id + 10),
         bid_hash: entity_id(id + 20),
         residual_offer_id: None,
@@ -301,7 +301,7 @@ async fn mount_slot_records(
                 .map(|(party, reading)| {
                     json!({
                         "measurement_point": party,
-                        "timestamp": timestamp_to_string_with_padding(slot),
+                        "timestamp": epoch_to_rfc3339(slot),
                         "value": reading,
                     })
                 })
@@ -310,13 +310,10 @@ async fn mount_slot_records(
         .collect();
     Mock::given(method("GET"))
         .and(path("/timeseries"))
-        .and(query_param(
-            "start_time",
-            timestamp_to_string_with_padding(slot),
-        ))
+        .and(query_param("start_time", epoch_to_rfc3339(slot)))
         .and(query_param(
             "end_time",
-            timestamp_to_string_with_padding(end - 1),
+            (epoch_to_datetime(end).unwrap() - Duration::milliseconds(1)).to_rfc3339(),
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(timeseries))
         .mount(server)
@@ -339,7 +336,10 @@ async fn mount_slot_records(
         Mock::given(method("GET"))
             .and(path("/market"))
             .and(query_param("market_id", &trade.market_id))
-            .respond_with(ResponseTemplate::new(200).set_body_json(market))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(EwdsMarketDto::try_from(market).unwrap()),
+            )
             .mount(server)
             .await;
     }

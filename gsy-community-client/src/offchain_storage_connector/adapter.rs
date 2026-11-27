@@ -1,12 +1,10 @@
-use primitives::ewds::dto::EwdsFacilityDto;
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
-    TimeseriesSchema,
 };
-use primitives::utils::{
-    validate_offchain_actor_id, profile_measurement_id, timestamp_to_string_with_padding,
-};
+use primitives::ewds::dto::{EwdsFacilityDto, TimeseriesDto};
+use primitives::utils::{profile_measurement_id, validate_offchain_actor_id};
 use reqwest::Client;
 use std::env;
 
@@ -44,13 +42,13 @@ impl AreaMarketInfoAdapter {
             .collect::<Vec<_>>();
         let timeseries = forecasts
             .iter()
-            .map(|forecast| TimeseriesSchema {
+            .map(|forecast| TimeseriesDto {
                 measurement_point: profile_measurement_id(
                     MeasurementPointType::Forecast,
                     forecast.community_uuid.as_str(),
                     forecast.facility_id.as_str(),
                 ),
-                timestamp: timestamp_to_string_with_padding(forecast.time_slot),
+                timestamp: forecast.time_slot.to_rfc3339(),
                 value: forecast.energy_kwh,
             })
             .collect::<Vec<_>>();
@@ -84,13 +82,13 @@ impl AreaMarketInfoAdapter {
             .collect::<Vec<_>>();
         let timeseries = measurements
             .iter()
-            .map(|measurement| TimeseriesSchema {
+            .map(|measurement| TimeseriesDto {
                 measurement_point: profile_measurement_id(
                     MeasurementPointType::Measurement,
                     measurement.community_uuid.as_str(),
                     measurement.facility_id.as_str(),
                 ),
-                timestamp: timestamp_to_string_with_padding(measurement.time_slot),
+                timestamp: measurement.time_slot.to_rfc3339(),
                 value: measurement.energy_kwh,
             })
             .collect::<Vec<_>>();
@@ -111,16 +109,16 @@ impl AreaMarketInfoAdapter {
     }
 
     // Validation logic (basic validation, can be extended)
-    pub fn validate_forecast(&self, forecast: &ForecastSchema, seconds_since_epoch: u64) -> bool {
-        forecast.energy_kwh > 0.0 && forecast.time_slot > seconds_since_epoch
+    pub fn validate_forecast(&self, forecast: &ForecastSchema, now: DateTime<Utc>) -> bool {
+        forecast.energy_kwh > 0.0 && forecast.time_slot > now
     }
 
     pub fn validate_measurement(
         &self,
         measurement: &MeasurementSchema,
-        seconds_since_epoch: u64,
+        now: DateTime<Utc>,
     ) -> bool {
-        measurement.energy_kwh > 0.0 && measurement.time_slot <= seconds_since_epoch
+        measurement.energy_kwh > 0.0 && measurement.time_slot <= now
     }
 
     pub async fn forward_facilities(&self, facilities: FacilitySchema) -> anyhow::Result<()> {

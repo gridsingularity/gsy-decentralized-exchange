@@ -1,5 +1,6 @@
+use chrono::DateTime;
 use primitives::ewds::dto::EwdsCommunityDto;
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use mongodb::{bson::doc, Client};
 use primitives::db_api_schema::grid_topology::{
@@ -11,7 +12,6 @@ use primitives::ewds::dto::{
     FacilityMarketValidationReason, FacilityMarketValidationRequest,
 };
 use primitives::ewds::EwdsOperation;
-use primitives::utils::EPOCH_RFC3339;
 use serde_json::{json, Value};
 
 async fn validate_via_ewds(db: &DatabaseWrapper, payload: Value) -> Value {
@@ -72,13 +72,13 @@ async fn seed_community(db: &DatabaseWrapper, id: &str) {
         .insert_one(MarketSchema {
             market_id: market_id(id),
             community_id: community_id(id),
-            opening_time: "100".to_string(),
-            closing_time: "200".to_string(),
-            delivery_start_time: "300".to_string(),
-            delivery_end_time: "400".to_string(),
+            opening_time: ts(100),
+            closing_time: ts(200),
+            delivery_start_time: ts(300),
+            delivery_end_time: ts(400),
             market_type: MarketType::Spot,
             matching_algorithm: MatchingAlgorithm::PayAsBid,
-            created_at: "100".to_string(),
+            created_at: ts(100),
         })
         .await
         .unwrap();
@@ -260,7 +260,7 @@ async fn http_community_ids_are_exact_and_eligibility_requires_the_same_identity
         let response = reqwest::Client::new()
             .post(format!("{}/communities", app.address))
             .json(&EwdsCommunityDto::from(EnergyCommunitySchema {
-                valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+                valid_from: DateTime::UNIX_EPOCH,
                 valid_until: None,
                 community_id: id.into(),
                 community_name: format!("Community {id}"),
@@ -308,7 +308,7 @@ fn community(id: &str, sites: Vec<String>) -> EnergyCommunitySchema {
         community_id: community_id(id),
         community_name: id.to_string(),
         sites,
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -319,7 +319,7 @@ fn site(id: &str, facilities: Vec<String>) -> SiteSchema {
         site_name: format!("site-{id}"),
         site_description: String::new(),
         facilities,
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -330,7 +330,7 @@ fn facility(facility_id: &str, site_id: &str) -> FacilitySchema {
         facility_name: facility_id.to_string(),
         site_id: site_id.to_string(),
         owner_id: format!("owner-{}", facility_id.trim_start_matches("facility-")),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -559,7 +559,7 @@ async fn sees_topology_updates_between_calls() {
     // A deleted facility is unknown.
     db.facilities()
         .store(vec![FacilitySchema {
-            valid_until: Some(EPOCH_RFC3339.to_string()),
+            valid_until: Some(DateTime::UNIX_EPOCH),
             ..facility("facility-a", "site-a")
         }])
         .await

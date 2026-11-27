@@ -1,6 +1,6 @@
 use primitives::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id, normalize_uuid,
-    validate_offchain_actor_id, hex_to_bytes16, uuid_v4_to_bytes16,
+    bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16,
+    normalize_uuid, rfc3339_to_datetime, uuid_v4_to_bytes16, validate_offchain_actor_id,
 };
 
 #[test]
@@ -162,4 +162,20 @@ fn canonical_outputs_round_trip_in_their_identifier_domains() {
     for actor in ["Facility-A", "ABABABAB-ABAB-4BAB-8BAB-ABABABABABAB", &actor_hash] {
         assert_eq!(validate_offchain_actor_id(&validate_offchain_actor_id(actor).unwrap()).unwrap(), actor);
     }
+}
+
+#[test]
+fn epoch_to_rfc3339_formats_utc_and_is_empty_out_of_range() {
+    assert_eq!(epoch_to_rfc3339(0), "1970-01-01T00:00:00+00:00");
+    assert_eq!(epoch_to_rfc3339(1_774_692_000), "2026-03-28T10:00:00+00:00");
+    // Above `i64::MAX`, the value used to wrap to a date before 1970.
+    assert_eq!(epoch_to_rfc3339(u64::MAX), "");
+    assert_eq!(epoch_to_rfc3339(i64::MAX as u64), "");
+}
+
+#[test]
+fn rfc3339_to_datetime_converts_to_utc_and_truncates_to_milliseconds() {
+    let parsed = rfc3339_to_datetime("2026-12-01T01:00:00.123999+01:00").unwrap();
+    assert_eq!(parsed.to_rfc3339(), "2026-12-01T00:00:00.123+00:00");
+    assert!(rfc3339_to_datetime("1764547200").is_err());
 }

@@ -9,8 +9,8 @@ use primitives::ewds::dto::{EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, EwdsClient};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    derive_onchain_id, epoch_to_rfc3339, validate_offchain_actor_id, hex_to_bytes16, uuid_v4_to_bytes16,
-    string_to_timestamp, NODE_FLOAT_SCALING_FACTOR,
+    datetime_to_epoch, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16, uuid_v4_to_bytes16,
+    validate_offchain_actor_id, NODE_FLOAT_SCALING_FACTOR,
 };
 
 use std::str::FromStr;
@@ -168,8 +168,8 @@ fn build_order_param(
     let owner_id = derive_onchain_id(&validate_offchain_actor_id(owner_id)?);
     let onchain_owner_id =
         hex_to_bytes16(&owner_id).context("Invalid on-chain owner ID")?;
-    let delivery_start: u64 =
-        string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
+    let delivery_start =
+        datetime_to_epoch(&market.delivery_start_time).context("Invalid delivery_start_time")?;
     Ok((
         onchain_order_id,
         onchain_owner_id,
@@ -252,8 +252,6 @@ pub async fn create_input_orders(
         && !rejected.is_empty()
     {
         let ewds = EwdsClient::from_env("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient", 60_000);
-        let delivery_start = string_to_timestamp(&market.delivery_start_time)
-            .context("Invalid delivery_start_time")?;
         for (forecast, owner_id, reason) in rejected {
             let is_bid = forecast.energy_kwh > 0.0;
             let submission = EwdsOrderDto {
@@ -261,7 +259,7 @@ pub async fn create_input_orders(
                 market_id: market.market_id.clone(),
                 order_type: if is_bid { "bid" } else { "offer" }.to_string(),
                 order_status: "submitted".to_string(),
-                time_slot: epoch_to_rfc3339(delivery_start),
+                time_slot: market.delivery_start_time.to_rfc3339(),
                 quantity: forecast.energy_kwh.abs(),
                 price_limit: forecast.energy_kwh.abs() * if is_bid { BID_RATE } else { OFFER_RATE },
                 created_by: owner_id,

@@ -1,9 +1,9 @@
 //! Builder cases for `local_origin_record`s, ported from fedecom to v2 fixtures.
 //! Pure: no database. `GOO_*` env vars must stay unset so the pilot defaults apply.
 
-use primitives::utils::EPOCH_RFC3339;
 use std::collections::HashSet;
 
+use chrono::{DateTime, TimeDelta, Utc};
 use gsy_offchain_storage::certificates::builder::{
     build_local_origin_records, build_local_origin_records_with_allocation,
     delivery_verification_reference, interval_bounds_utc, round_half_up_2dp, sort_records,
@@ -20,9 +20,13 @@ use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::epoch_to_datetime;
 
 const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z, on a 900s boundary
+
+fn ts(epoch_secs: u64) -> DateTime<Utc> {
+    epoch_to_datetime(epoch_secs).unwrap()
+}
 
 const COMMUNITY: &str = "community-1";
 const OTHER_COMMUNITY: &str = "community-2";
@@ -49,7 +53,7 @@ fn facility(
         facility_name: facility_name.to_string(),
         site_id: site_id.to_string(),
         owner_id: owner_id.to_string(),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -59,7 +63,7 @@ fn community(community_id: &str, sites: &[&str]) -> EnergyCommunitySchema {
         community_id: community_id.to_string(),
         community_name: format!("{community_id}-name"),
         sites: sites.iter().map(|site| site.to_string()).collect(),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -110,7 +114,7 @@ fn point(
 fn value(measurement_point: &str, time_slot: u64, value: f64) -> TimeseriesSchema {
     TimeseriesSchema {
         measurement_point: measurement_point.to_string(),
-        timestamp: timestamp_to_string_with_padding(time_slot),
+        timestamp: ts(time_slot),
         value,
     }
 }
@@ -202,13 +206,13 @@ fn market(time_slot: u64) -> MarketSchema {
     MarketSchema {
         market_id: market_id(time_slot),
         community_id: COMMUNITY.to_string(),
-        opening_time: timestamp_to_string_with_padding(time_slot.saturating_sub(900)),
-        closing_time: timestamp_to_string_with_padding(time_slot),
-        delivery_start_time: timestamp_to_string_with_padding(time_slot),
-        delivery_end_time: timestamp_to_string_with_padding(time_slot.saturating_add(900)),
+        opening_time: ts(time_slot.saturating_sub(900)),
+        closing_time: ts(time_slot),
+        delivery_start_time: ts(time_slot),
+        delivery_end_time: ts(time_slot.saturating_add(900)),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: timestamp_to_string_with_padding(time_slot.saturating_sub(900)),
+        created_at: ts(time_slot.saturating_sub(900)),
     }
 }
 
@@ -236,7 +240,7 @@ fn trade(
         seller: seller_owner.to_owned(),
         buyer: buyer.to_string(),
         market_id: market_id(time_slot),
-        creation_time,
+        creation_time: ts(creation_time),
         offer_hash: format!("{trade_uuid}-offer"),
         bid_hash: format!("{trade_uuid}-bid"),
         residual_offer_id: None,
@@ -245,7 +249,7 @@ fn trade(
             selected_energy_kWh: energy_kwh,
             energy_rate: 0.2,
         },
-        status_updated_at: Some(SLOT + 1800),
+        status_updated_at: Some(ts(SLOT + 1800)),
     }
 }
 
@@ -508,6 +512,44 @@ fn off_boundary_time_slot_yields_no_record() {
         100,
     );
     assert!(fixture.build(vec![t]).is_empty());
+}
+
+#[test]
+fn a_value_a_fraction_of_a_second_after_the_slot_start_is_not_evidence() {
+    // In whole seconds, 10:30:00.500 would be the slot start, 10:30:00.
+    let late = TimeseriesSchema {
+        timestamp: ts(SLOT) + TimeDelta::milliseconds(500),
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    };
+    let mut fixture = Fixture::new();
+    fixture.timeseries = vec![late.clone()];
+    assert!(fixture.build(vec![sale("trade-1", 3.0, 100)]).is_empty());
+
+    // A value exactly at the slot start is evidence; the late one adds nothing to it.
+    fixture.timeseries = vec![late, value(EXPORT_POINT, SLOT, 3.0)];
+    let records = fixture.build(vec![sale("trade-1", 3.0, 100)]);
+    assert_eq!(trade_references(&records), vec!["trade-1"]);
+    assert_eq!(
+        records[0].measurement_provenance.measurement_recorded_at,
+        SLOT
+    );
+    assert!(fixture.build(vec![sale("trade-1", 3.5, 100)]).is_empty());
+}
+
+#[test]
+fn a_slot_that_starts_off_a_whole_second_yields_no_record() {
+    let start = ts(SLOT) + TimeDelta::milliseconds(500);
+    let mut fixture = Fixture::new();
+    fixture.timeseries = vec![TimeseriesSchema {
+        timestamp: start,
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    }];
+    let markets = vec![MarketSchema {
+        delivery_start_time: start,
+        ..market(SLOT)
+    }];
+    let trades = vec![sale("trade-1", 3.0, 100)];
+    assert!(build_local_origin_records(trades, &fixture.inputs(&markets)).is_empty());
 }
 
 #[test]
@@ -943,18 +985,28 @@ fn unrepresentable_time_slot_yields_no_record_and_does_not_panic() {
     assert_eq!(interval_bounds_utc(absurd, 900), None);
     assert_eq!(delivery_verification_reference(absurd, 900), None);
 
+    // Stored dates are always representable, but one before 1970 has no Unix-seconds
+    // slot: the trades of such a market are skipped.
+    let before_epoch = DateTime::<Utc>::from_timestamp(-900, 0).unwrap();
     let mut fixture = Fixture::new();
-    fixture.timeseries = vec![value(EXPORT_POINT, absurd, 4.0)];
+    fixture.timeseries = vec![TimeseriesSchema {
+        timestamp: before_epoch,
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    }];
     let t = trade(
         "trade-1",
         SELLER_OWNER,
         &BUYER_OWNER.to_owned(),
-        absurd,
+        SLOT,
         3.0,
         TradeStatus::Executed,
         100,
     );
-    assert!(fixture.build(vec![t]).is_empty());
+    let market = MarketSchema {
+        delivery_start_time: before_epoch,
+        ..market(SLOT)
+    };
+    assert!(build_local_origin_records(vec![t], &fixture.inputs(&[market])).is_empty());
 }
 
 #[test]

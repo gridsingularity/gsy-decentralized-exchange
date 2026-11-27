@@ -1,4 +1,4 @@
-use ::primitives::{log::setup_logging, utils::timestamp_to_datetime_string};
+use ::primitives::{log::setup_logging, utils::epoch_to_rfc3339};
 use clap::Parser;
 use gsy_execution_engine::{
     services::execution_orchestrator::{finalize_timeslot, run_execution_cycle},
@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
                 let timeslot = timeslot_scheduler.calculate_timeslot();
                 info!(
                     "Execution cycle for timeslot {} ({})",
-                    timestamp_to_datetime_string(timeslot),
+                    epoch_to_rfc3339(timeslot),
                     timeslot
                 );
                 if let Err(e) = run_execution_cycle(
@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
                 {
                     info!(
                         "Finalizing timeslot {} ({}) after its grace period",
-                        timestamp_to_datetime_string(expired),
+                        epoch_to_rfc3339(expired),
                         expired
                     );
                     match finalize_timeslot(

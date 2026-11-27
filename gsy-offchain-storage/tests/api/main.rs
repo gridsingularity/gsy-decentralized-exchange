@@ -11,6 +11,7 @@ mod ids;
 mod actor_mappings;
 mod market;
 mod measurements;
+mod migrations;
 mod orders;
 mod pending_events;
 pub mod trades;

@@ -188,9 +188,8 @@ Their fields are snake_case, like `FacilitySchema` and `SiteSchema`:
 received a version of a community, site or facility. It sets the value itself
 and ignores one that is sent. `valid_until` (`validUntil`) marks the entry as
 deleted from that time on. Both are RFC 3339 strings. A sent time may have any
-offset; it is stored and returned in UTC with whole seconds, e.g.
-`2026-12-01T00:00:00+00:00`, so that the stored times compare correctly as
-strings. An invalid time rejects the whole event. See
+offset; it is stored as a date to the millisecond and returned in UTC, e.g.
+`2026-12-01T00:00:00+00:00`. An invalid time rejects the whole event. See
 [Versions and Deletion](ewds-integration.md#versions-and-deletion).
 
 ### Trade Mapping

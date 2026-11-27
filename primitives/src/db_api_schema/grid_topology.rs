@@ -1,3 +1,7 @@
+use bson::serde_helpers::{
+    chrono_datetime_as_bson_datetime, chrono_datetime_as_bson_datetime_optional,
+};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -70,9 +74,14 @@ pub struct EnergyCommunitySchema {
     pub community_id: String,
     pub community_name: String,
     pub sites: Vec<String>,
-    pub valid_from: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valid_until: Option<String>,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub valid_from: DateTime<Utc>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub valid_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -81,9 +90,14 @@ pub struct SiteSchema {
     pub site_name: String,
     pub site_description: String,
     pub facilities: Vec<String>,
-    pub valid_from: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valid_until: Option<String>,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub valid_from: DateTime<Utc>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub valid_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -92,9 +106,14 @@ pub struct FacilitySchema {
     pub facility_name: String,
     pub site_id: String,
     pub owner_id: String,
-    pub valid_from: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub valid_until: Option<String>,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub valid_from: DateTime<Utc>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub valid_until: Option<DateTime<Utc>>,
 }
 
 impl FacilitySchema {

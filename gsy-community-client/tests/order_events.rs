@@ -14,7 +14,9 @@ use primitives::ewds::{
     EwdsTopicConfig,
 };
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
-use primitives::utils::{derive_onchain_id, hex_to_bytes16, uuid_v4_to_bytes16, rfc3339_to_epoch};
+use primitives::utils::{
+    derive_onchain_id, epoch_to_datetime, hex_to_bytes16, rfc3339_to_epoch, uuid_v4_to_bytes16,
+};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -1494,8 +1496,8 @@ mod validate_order {
             status_updated_at: None,
             order_type: OrderEnum::Bid,
             market_id: OPEN_MARKET.to_string(),
-            time_slot: 1_790_762_400,
-            creation_time: 1_790_761_212,
+            time_slot: epoch_to_datetime(1_790_762_400).unwrap(),
+            creation_time: epoch_to_datetime(1_790_761_212).unwrap(),
             energy_kWh: 1.5,
             energy_rate: 0.3,
             created_by: "owner-1".to_string(),
@@ -1641,8 +1643,8 @@ mod order_params {
             status_updated_at: None,
             order_type: OrderEnum::Offer,
             market_id: OPEN_MARKET.to_string(),
-            time_slot: 1_790_762_400,
-            creation_time: 1_790_761_212,
+            time_slot: epoch_to_datetime(1_790_762_400).unwrap(),
+            creation_time: epoch_to_datetime(1_790_761_212).unwrap(),
             energy_kWh: 0.30005,
             energy_rate: 0.07,
             created_by: format!("0x{}", "aa".repeat(16)),

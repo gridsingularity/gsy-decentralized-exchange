@@ -1,5 +1,6 @@
 use crate::utils::indexed_bytes16_topic;
 use crate::world::{CommunityMarketOrderPair, MyWorld, PayAsClearScenario};
+use chrono::{DateTime, Utc};
 use cucumber::{then, when};
 use ethers::abi::AbiDecode;
 use ethers::prelude::*;
@@ -12,14 +13,14 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
-use primitives::ewds::dto::FacilityMarketValidationRequest;
 use primitives::constants::GLOBAL_CONSTANTS;
+use primitives::ewds::dto::{EwdsMarketDto, FacilityMarketValidationRequest};
 use primitives::matching::{current_unix_time, matching_block_interval, ClearingSchedule};
-use primitives::MatchingAlgorithm;
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
+use primitives::MatchingAlgorithm;
 use primitives::utils::{
-    bytes16_to_uuid_string, derive_onchain_id, uuid_v4_to_bytes16,
-    rfc3339_to_epoch, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_uuid_string, derive_onchain_id, epoch_to_datetime, rfc3339_to_epoch,
+    uuid_v4_to_bytes16, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
 use std::env;
@@ -273,10 +274,10 @@ pub(crate) fn market_id_as_hex(world: &MyWorld) -> String {
     bytes16_to_uuid_string(world.last_market_id.expect("Missing market id"))
 }
 
-fn market_window(world: &MyWorld) -> (u64, u64) {
+fn market_window(world: &MyWorld) -> (DateTime<Utc>, DateTime<Utc>) {
     (
-        world.target_delivery_time as u64,
-        (world.target_delivery_time + 900) as u64,
+        epoch_to_datetime(world.target_delivery_time).unwrap(),
+        epoch_to_datetime(world.target_delivery_time + 900).unwrap(),
     )
 }
 
@@ -339,15 +340,16 @@ pub(crate) async fn query_orders_for_market(world: &MyWorld, market_id: &str) ->
 
 async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
     read_projection(|| async {
-        Ok(world
+        let market = world
             .http_client
             .get(format!("{}/market", world.offchain_storage_url))
             .query(&[("market_id", market_id)])
             .send()
             .await?
             .error_for_status()?
-            .json::<MarketSchema>()
-            .await?)
+            .json::<EwdsMarketDto>()
+            .await?;
+        MarketSchema::try_from(market)
     })
     .await
 }
@@ -740,7 +742,7 @@ async fn verify_community_market_matches(world: &mut MyWorld) {
             let market = query_market(world, trade.market_id.as_str()).await;
             assert_eq!(
                 market.delivery_start_time,
-                timestamp_to_string_with_padding(world.target_delivery_time),
+                epoch_to_datetime(world.target_delivery_time).unwrap(),
                 "Trade {} belongs to a market with the wrong delivery start time",
                 trade.trade_uuid
             );
@@ -761,29 +763,29 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
         MeasurementSchema {
             facility_id: world.facility_id_for_user("alice"),
             community_uuid: world.community_id.clone(),
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
+            time_slot: epoch_to_datetime(world.target_delivery_time).unwrap(),
+            creation_time: epoch_to_datetime(1).unwrap(),
             energy_kwh: 3.0,
         },
         MeasurementSchema {
             facility_id: "secondary-areabob".to_string(),
             community_uuid: world.secondary_community_id.clone(),
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
+            time_slot: epoch_to_datetime(world.target_delivery_time).unwrap(),
+            creation_time: epoch_to_datetime(1).unwrap(),
             energy_kwh: 3.0,
         },
         MeasurementSchema {
             facility_id: world.facility_id_for_user("charlie"),
             community_uuid: world.community_id.clone(),
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
+            time_slot: epoch_to_datetime(world.target_delivery_time).unwrap(),
+            creation_time: epoch_to_datetime(1).unwrap(),
             energy_kwh: -2.0,
         },
         MeasurementSchema {
             facility_id: "secondary-areacharlie".to_string(),
             community_uuid: world.secondary_community_id.clone(),
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
+            time_slot: epoch_to_datetime(world.target_delivery_time).unwrap(),
+            creation_time: epoch_to_datetime(1).unwrap(),
             energy_kwh: -2.0,
         },
     ];
@@ -1058,8 +1060,8 @@ pub(crate) async fn submit_measurements_with_energy(world: &mut MyWorld, energy:
             } else {
                 -energy
             },
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
+            time_slot: epoch_to_datetime(world.target_delivery_time).unwrap(),
+            creation_time: epoch_to_datetime(1).unwrap(),
         })
     }
 
@@ -1082,8 +1084,8 @@ async fn submit_single_facility_measurement(world: &mut MyWorld, energy: f64, us
             facility_id,
             community_uuid: world.community_id.clone(),
             energy_kwh: energy,
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
+            time_slot: epoch_to_datetime(world.target_delivery_time).unwrap(),
+            creation_time: epoch_to_datetime(1).unwrap(),
         }])
         .await
         .expect("Failed to submit the single-facility measurement");
@@ -1168,7 +1170,13 @@ async fn assert_trade_matched_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
                     && (order.order_id.eq_ignore_ascii_case(&trade.bid_hash)
                         || order.order_id.eq_ignore_ascii_case(&trade.offer_hash))
             }) {
-                assert_eq!(order.status_updated_at, Some(delivery_verification_timestamp(world, trade).await));
+                assert_eq!(
+                    order.status_updated_at,
+                    Some(
+                        epoch_to_datetime(delivery_verification_timestamp(world, trade).await)
+                            .unwrap()
+                    )
+                );
             }
             return;
         }
@@ -1910,19 +1918,23 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         assert_eq!(event.residual_offer_id, expected_offer);
         if trade.trade_uuid == second.trade_uuid {
             expected.status_updated_at = Some(
-                world.provider
-                    .get_block(events[0].1.block_hash)
-                    .await
-                    .expect("Failed to fetch residual match block")
-                    .expect("Missing residual match block")
-                    .timestamp.as_u64(),
+                epoch_to_datetime(
+                    world.provider
+                        .get_block(events[0].1.block_hash)
+                        .await
+                        .expect("Failed to fetch residual match block")
+                        .expect("Missing residual match block")
+                        .timestamp.as_u64(),
+                )
+                .unwrap(),
             );
         }
         transaction_hashes.push(events[0].1.transaction_hash);
     }
     if residual.status == OrderStatus::Executed {
         expected.status = OrderStatus::Executed;
-        expected.status_updated_at = Some(delivery_verification_timestamp(world, &second).await);
+        expected.status_updated_at =
+            Some(epoch_to_datetime(delivery_verification_timestamp(world, &second).await).unwrap());
     }
     assert_eq!(
         residual, expected,

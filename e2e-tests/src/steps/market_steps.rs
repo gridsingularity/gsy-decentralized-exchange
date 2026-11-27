@@ -1,4 +1,4 @@
-use primitives::utils::EPOCH_RFC3339;
+use chrono::DateTime;
 use crate::utils::indexed_bytes16_topic;
 use crate::world::{MyWorld, PRIMARY_SITE_ID};
 use cucumber::{then, when};
@@ -12,7 +12,8 @@ use primitives::ewds::dto::{EwdsCommunityDto, EwdsEventEnvelope};
 use primitives::ewds::{EwdsClient, EwdsEventType, EwdsOperation};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    bytes16_to_uuid_string, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16,
+    bytes16_to_uuid_string, derive_onchain_id, epoch_to_datetime, epoch_to_rfc3339,
+    hex_to_bytes16,
 };
 use primitives::{MarketType, MatchingAlgorithm};
 use serde_json::json;
@@ -53,7 +54,7 @@ async fn submit_market_forecasts_three_users(
             facility_name: format!("area{}", user1.clone()),
             site_id: PRIMARY_SITE_ID.to_string(),
             owner_id: user1.clone(),
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
         FacilitySchema {
@@ -61,7 +62,7 @@ async fn submit_market_forecasts_three_users(
             facility_name: format!("area{}", user2.clone()),
             site_id: PRIMARY_SITE_ID.to_string(),
             owner_id: user2.clone(),
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
         FacilitySchema {
@@ -69,7 +70,7 @@ async fn submit_market_forecasts_three_users(
             facility_name: format!("area{}", user3.clone()),
             site_id: PRIMARY_SITE_ID.to_string(),
             owner_id: user3.clone(),
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
     ];
@@ -87,8 +88,8 @@ async fn submit_market_forecasts_three_users(
         forecasts.push(ForecastSchema {
             facility_id: facility.facility_id.clone(),
             community_uuid: world.community_id.clone(),
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
+            time_slot: epoch_to_datetime(world.target_delivery_time).unwrap(),
+            creation_time: epoch_to_datetime(1).unwrap(),
             energy_kwh: energy_value,
             confidence: 1.0,
         });
@@ -118,7 +119,7 @@ async fn submit_uuid_facility_forecasts(world: &mut MyWorld, energy: f64) {
         .into_iter()
         .enumerate()
         .map(|(index, user)| FacilitySchema {
-            valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
             facility_id: format!("ABCDEFAB-ABCD-4BCD-ABCD-{:012X}", index + 1),
             facility_name: format!("area{user}"),
@@ -295,14 +296,14 @@ async fn submit_two_communities(world: &mut MyWorld) {
             community_id: world.community_id.clone(),
             community_name: format!("E2E Community {}", world.community_id),
             sites: vec![PRIMARY_SITE_ID.to_string()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
         EnergyCommunitySchema {
             community_id: world.secondary_community_id.clone(),
             community_name: format!("E2E Secondary Community {}", world.secondary_community_id),
             sites: vec!["site-12346".to_string()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
     ];
@@ -320,7 +321,7 @@ async fn submit_two_communities(world: &mut MyWorld) {
                     facility_name: format!("{prefix}area{user}"),
                     site_id: site.to_string(),
                     owner_id: format!("{prefix}{user}"),
-                    valid_from: EPOCH_RFC3339.to_string(),
+                    valid_from: DateTime::UNIX_EPOCH,
                     valid_until: None,
                 })
         })
@@ -358,7 +359,7 @@ async fn upsert_default_community(world: &MyWorld) {
         community_id: world.community_id.clone(),
         community_name: format!("E2E Community {}", world.community_id),
         sites: vec![PRIMARY_SITE_ID.to_string()],
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     };
 

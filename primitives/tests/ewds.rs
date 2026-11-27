@@ -1,8 +1,10 @@
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
+    ids::IdMappingSchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
-    profiles::MeasurementSchema,
+    profiles::{MeasurementSchema, TimeseriesSchema},
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
@@ -11,7 +13,7 @@ use primitives::db_api_schema::{
 use primitives::ewds::dto::{
     energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
     EwdsEventEnvelope, EwdsFacilityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
-    EwdsRequestEnvelope, EwdsSiteDto, EwdsTradeDto,
+    EwdsRequestEnvelope, EwdsSiteDto, EwdsTradeDto, IdMappingDto, TimeseriesDto,
 };
 use primitives::ewds::{
     empty_response_grace_elapsed, event_retry_delay_ms, invalid_event, is_invalid_event,
@@ -19,7 +21,7 @@ use primitives::ewds::{
     parse_gateway_delivery_summary, select_response_data, EwdsEventTopicConfig, EwdsEventType,
     EwdsOperation, EwdsTopicConfig, EwdsTopicPair,
 };
-use primitives::utils::{epoch_to_rfc3339, EPOCH_RFC3339};
+use primitives::utils::{epoch_to_datetime, epoch_to_rfc3339};
 use serde_json::{json, Value};
 use std::str::FromStr;
 use std::time::Instant;
@@ -28,13 +30,22 @@ use std::time::Instant;
 mod tests {
     use super::*;
 
+    fn ts(epoch_secs: u64) -> DateTime<Utc> {
+        epoch_to_datetime(epoch_secs).unwrap()
+    }
+
+    /// A time field as MongoDB stores it.
+    fn bson_date(epoch_secs: i64) -> bson::Bson {
+        bson::Bson::DateTime(bson::DateTime::from_millis(epoch_secs * 1000))
+    }
+
     #[test]
     fn community_conversion_round_trips_through_ewds_dto() {
         let expected = EnergyCommunitySchema {
             community_id: "a5657b6e-b0b2-46ee-87d6-1e29470339a7".to_string(),
             community_name: "Test community".to_string(),
             sites: vec!["site-id".to_string()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         };
 
@@ -55,8 +66,8 @@ mod tests {
             status_updated_at: None,
             order_type: OrderEnum::Bid,
             market_id: "market-id".to_string(),
-            time_slot: 10,
-            creation_time: 9,
+            time_slot: ts(10),
+            creation_time: ts(9),
             energy_kWh: 4.5,
             energy_rate: 20.0,
             created_by: "actor-id".to_string(),
@@ -72,10 +83,10 @@ mod tests {
     #[test]
     fn order_status_timestamp_is_optional_for_legacy_records() {
         let expected = order();
-        let stored = serde_json::to_value(&expected).unwrap();
+        let stored = bson::to_document(&expected).unwrap();
         assert!(stored.get("status_updated_at").is_none());
         assert_eq!(
-            serde_json::from_value::<DbOrderSchema>(stored).unwrap(),
+            bson::from_document::<DbOrderSchema>(stored).unwrap(),
             expected
         );
 
@@ -103,11 +114,11 @@ mod tests {
                 let mut expected = order();
                 expected.order_type = order_type.clone();
                 expected.status = status;
-                expected.status_updated_at = Some(1_234);
+                expected.status_updated_at = Some(ts(1_234));
 
-                let stored = serde_json::to_value(&expected).unwrap();
-                assert_eq!(stored["status_updated_at"], serde_json::json!(1_234));
-                let parsed: DbOrderSchema = serde_json::from_value(stored).unwrap();
+                let stored = bson::to_document(&expected).unwrap();
+                assert_eq!(stored.get("status_updated_at"), Some(&bson_date(1_234)));
+                let parsed: DbOrderSchema = bson::from_document(stored).unwrap();
                 assert_eq!(parsed, expected);
 
                 let wire = serde_json::to_value(EwdsOrderDto::from(parsed)).unwrap();
@@ -338,7 +349,7 @@ mod tests {
             seller: "seller-id".to_string(),
             buyer: "buyer-id".to_string(),
             market_id: "market-id".to_string(),
-            creation_time: 10,
+            creation_time: ts(10),
             offer_hash: "offer-hash".to_string(),
             bid_hash: "bid-hash".to_string(),
             residual_offer_id: Some("res-offer".to_string()),
@@ -379,7 +390,7 @@ mod tests {
         assert_eq!(db.seller, "seller-id");
         assert_eq!(db.buyer, "buyer-id");
         assert_eq!(db.market_id, "market-id");
-        assert_eq!(db.creation_time, 10);
+        assert_eq!(db.creation_time, ts(10));
         assert_eq!(db.offer_hash, "offer-hash");
         assert_eq!(db.bid_hash, "bid-hash");
         assert_eq!(db.residual_offer_id.as_deref(), Some("res-offer"));
@@ -445,8 +456,8 @@ mod tests {
         MeasurementSchema {
             facility_id: "facility-id".to_string(),
             community_uuid: "community-id".to_string(),
-            time_slot: 900,
-            creation_time: 910,
+            time_slot: ts(900),
+            creation_time: ts(910),
             energy_kwh: -1.5,
         }
     }
@@ -614,8 +625,8 @@ mod tests {
         let bid = &orders[0];
         assert_eq!(bid.order_id, "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f");
         assert_eq!(bid.order_type, OrderEnum::Bid);
-        assert_eq!(bid.time_slot, 1_790_762_400);
-        assert_eq!(bid.creation_time, 1_790_761_212);
+        assert_eq!(bid.time_slot, ts(1_790_762_400));
+        assert_eq!(bid.creation_time, ts(1_790_761_212));
         assert_eq!(bid.energy_kWh, 1.5);
         assert_eq!(bid.energy_rate, 0.3);
         assert_eq!(bid.created_by, "owner-1");
@@ -649,7 +660,7 @@ mod tests {
             traded_quantity: 75.0,
             num_trades: 3,
             tx_hash: "0xabc".to_string(),
-            clearing_time: 42,
+            clearing_time: ts(42),
         }
     }
 
@@ -683,7 +694,7 @@ mod tests {
         assert_eq!(db.traded_quantity, 75.0);
         assert_eq!(db.num_trades, 3);
         assert_eq!(db.tx_hash, "0xabc");
-        assert_eq!(db.clearing_time, 42);
+        assert_eq!(db.clearing_time, ts(42));
     }
 
     #[test]
@@ -757,19 +768,18 @@ mod tests {
         assert!(NoBidReason::from_str("gremlins").is_err());
     }
 
-    /// A market as the off-chain storage stores it: UUIDv4 market ID and
-    /// zero-padded epoch seconds.
+    /// A market as the off-chain storage stores it: UUIDv4 market ID and dates.
     fn market() -> MarketSchema {
         MarketSchema {
             market_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_string(),
             community_id: "11111111-1111-4111-8111-111111111111".to_string(),
-            opening_time: "00000000001700000000".to_string(),
-            closing_time: "00000000001700001800".to_string(),
-            delivery_start_time: "00000000001700001800".to_string(),
-            delivery_end_time: "00000000001700002700".to_string(),
+            opening_time: ts(1_700_000_000),
+            closing_time: ts(1_700_001_800),
+            delivery_start_time: ts(1_700_001_800),
+            delivery_end_time: ts(1_700_002_700),
             market_type: MarketType::Settlement,
             matching_algorithm: MatchingAlgorithm::PayAsClear,
-            created_at: "00000000001699999000".to_string(),
+            created_at: ts(1_699_999_000),
         }
     }
 
@@ -816,11 +826,6 @@ mod tests {
             ..market()
         };
         assert!(EwdsMarketDto::try_from(invalid_id).is_err());
-        let invalid_stored_time = MarketSchema {
-            opening_time: "2023-11-14T22:13:20Z".to_string(),
-            ..market()
-        };
-        assert!(EwdsMarketDto::try_from(invalid_stored_time).is_err());
 
         let dto = EwdsMarketDto::try_from(market()).unwrap();
         let invalid_dto_id = EwdsMarketDto {
@@ -1157,20 +1162,116 @@ mod tests {
     #[test]
     fn trade_status_updated_at_is_optional_in_storage() {
         // Omitted when unset.
-        let db_json = serde_json::to_value(trade()).unwrap();
-        assert!(db_json.get("status_updated_at").is_none());
+        let stored = bson::to_document(&trade()).unwrap();
+        assert!(stored.get("status_updated_at").is_none());
 
         // A pre-existing document without the field still deserializes.
-        let db: DbTradeSchema = serde_json::from_value(db_json).unwrap();
+        let db: DbTradeSchema = bson::from_document(stored).unwrap();
         assert_eq!(db.status_updated_at, None);
 
-        // A set value round-trips under its snake_case storage name.
+        // A set value round-trips as a date under its snake_case storage name.
         let mut executed = trade();
         executed.status = TradeStatus::Executed;
-        executed.status_updated_at = Some(1_234);
-        let json = serde_json::to_value(&executed).unwrap();
-        assert_eq!(json["status_updated_at"], serde_json::json!(1_234));
-        let parsed: DbTradeSchema = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.status_updated_at, Some(1_234));
+        executed.status_updated_at = Some(ts(1_234));
+        let stored = bson::to_document(&executed).unwrap();
+        assert_eq!(stored.get("status_updated_at"), Some(&bson_date(1_234)));
+        let parsed: DbTradeSchema = bson::from_document(stored).unwrap();
+        assert_eq!(parsed.status_updated_at, Some(ts(1_234)));
+    }
+
+    /// Every stored time field is written to MongoDB as a BSON date and read back unchanged.
+    #[test]
+    fn stored_time_fields_are_bson_dates() {
+        fn assert_dates<T>(value: &T, fields: &[&str])
+        where
+            T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+        {
+            let stored = bson::to_document(value).unwrap();
+            for field in fields {
+                assert!(
+                    matches!(stored.get(*field), Some(bson::Bson::DateTime(_))),
+                    "{field} is stored as {:?}",
+                    stored.get(*field)
+                );
+            }
+            assert_eq!(&bson::from_document::<T>(stored).unwrap(), value);
+        }
+
+        let mut order = order();
+        order.status_updated_at = Some(ts(11));
+        assert_dates(&order, &["time_slot", "creation_time", "status_updated_at"]);
+        let mut trade = trade();
+        trade.status_updated_at = Some(ts(11));
+        assert_dates(&trade, &["creation_time", "status_updated_at"]);
+        assert_dates(&clearing_result(), &["clearing_time"]);
+        assert_dates(
+            &market(),
+            &[
+                "opening_time",
+                "closing_time",
+                "delivery_start_time",
+                "delivery_end_time",
+                "created_at",
+            ],
+        );
+        assert_dates(
+            &TimeseriesSchema {
+                measurement_point: "measurement:c:f".to_string(),
+                timestamp: ts(900),
+                value: 1.5,
+            },
+            &["timestamp"],
+        );
+        assert_dates(
+            &IdMappingSchema {
+                offchain_id: "facility".to_string(),
+                onchain_id: "0x01".to_string(),
+                creation_time: ts(5),
+            },
+            &["creation_time"],
+        );
+    }
+
+    #[test]
+    fn timeseries_dto_carries_an_rfc3339_timestamp() {
+        let schema = TimeseriesSchema {
+            measurement_point: "measurement:c:f".to_string(),
+            timestamp: ts(900),
+            value: -2.0,
+        };
+        let dto = TimeseriesDto::from(schema.clone());
+        assert_eq!(
+            serde_json::to_value(&dto).unwrap(),
+            json!({
+                "measurement_point": "measurement:c:f",
+                "timestamp": epoch_to_rfc3339(900),
+                "value": -2.0,
+            })
+        );
+        assert_eq!(TimeseriesSchema::try_from(dto.clone()).unwrap(), schema);
+
+        let padded_epoch = TimeseriesDto {
+            timestamp: "00000000000000000900".to_string(),
+            ..dto
+        };
+        assert!(TimeseriesSchema::try_from(padded_epoch).is_err());
+    }
+
+    #[test]
+    fn id_mapping_dto_carries_an_rfc3339_creation_time() {
+        let schema = IdMappingSchema {
+            offchain_id: "facility".to_string(),
+            onchain_id: "0x01".to_string(),
+            creation_time: ts(5),
+        };
+        let dto = IdMappingDto::from(schema.clone());
+        assert_eq!(dto.creation_time, epoch_to_rfc3339(5));
+        assert_eq!(IdMappingSchema::try_from(dto.clone()).unwrap(), schema);
+
+        let epoch = IdMappingDto {
+            creation_time: "5".to_string(),
+            ..dto
+        };
+        assert!(IdMappingSchema::try_from(epoch).is_err());
     }
 }

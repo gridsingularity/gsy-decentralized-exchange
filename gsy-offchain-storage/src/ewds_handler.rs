@@ -2,6 +2,7 @@ use primitives::ewds::dto::EwdsFacilityDto;
 use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use futures::future::{join, join_all};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::channel::{
@@ -10,7 +11,7 @@ use primitives::ewds::channel::{
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
     EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
-    EwdsSendMessageDto, EwdsTradeDto, FacilityMarketValidationRequest,
+    EwdsSendMessageDto, EwdsTradeDto, FacilityMarketValidationRequest, IdMappingDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
@@ -18,12 +19,12 @@ use primitives::ewds::{
     remember_id, EwdsEventTopicConfig, EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{
-    normalize_uuid, validate_offchain_actor_id, opt_rfc3339_to_epoch,
-    timestamp_to_string_with_padding,
+    normalize_uuid, opt_rfc3339_to_datetime, validate_offchain_actor_id,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ops::Range;
 use std::time::{Instant, SystemTime};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{sleep, Duration};
@@ -184,14 +185,14 @@ pub const TIME_RANGE_TOO_LARGE: &str = "TIME_RANGE_TOO_LARGE";
 pub const INVALID_TIME_RANGE: &str = "INVALID_TIME_RANGE";
 
 /// Validates a `trades.query` range (`endTime` is exclusive), returning the
-/// bounds or the error to publish back to the requester. A query for one market
+/// range or the error to publish back to the requester. A query for one market
 /// needs no range, since the market already limits the result; any other query
 /// needs both bounds.
 pub fn validate_trades_query_range(
     market_id: Option<&str>,
-    start_time: Option<u64>,
-    end_time: Option<u64>,
-) -> std::result::Result<Option<(u64, u64)>, EwdsErrorPayload> {
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
+) -> std::result::Result<Option<Range<DateTime<Utc>>>, EwdsErrorPayload> {
     let (start, end) = match (start_time, end_time) {
         (Some(start), Some(end)) => (start, end),
         (None, None) if market_id.is_some() => return Ok(None),
@@ -207,21 +208,22 @@ pub fn validate_trades_query_range(
             code: INVALID_TIME_RANGE.to_string(),
             message: format!(
                 "trades.query endTime ({}) must not be before startTime ({})",
-                end, start
+                end.to_rfc3339(),
+                start.to_rfc3339()
             ),
         });
     }
-    if end - start > MAX_TRADES_QUERY_RANGE_SECS {
+    let span_secs = (end - start).num_seconds().unsigned_abs();
+    if span_secs > MAX_TRADES_QUERY_RANGE_SECS {
         return Err(EwdsErrorPayload {
             code: TIME_RANGE_TOO_LARGE.to_string(),
             message: format!(
                 "trades.query range {}s exceeds maximum of {}s (1 day)",
-                end - start,
-                MAX_TRADES_QUERY_RANGE_SECS
+                span_secs, MAX_TRADES_QUERY_RANGE_SECS
             ),
         });
     }
-    Ok(Some((start, end)))
+    Ok(Some(start..end))
 }
 
 #[derive(Deserialize)]
@@ -408,8 +410,8 @@ pub async fn handle_request(
                         .as_deref()
                         .map(normalize_uuid)
                         .transpose()?,
-                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
-                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+                    opt_rfc3339_to_datetime(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_datetime(payload.end_time.as_deref())?,
                 ))
             })();
             let (market_id, start_time, end_time) = match query {
@@ -449,8 +451,8 @@ pub async fn handle_request(
                         .as_deref()
                         .map(normalize_uuid)
                         .transpose()?,
-                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
-                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+                    opt_rfc3339_to_datetime(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_datetime(payload.end_time.as_deref())?,
                 ))
             })();
             let (market_id, start_time, end_time) = match query {
@@ -495,8 +497,8 @@ pub async fn handle_request(
                 .trades()
                 .filter_trades(
                     market_id,
-                    range.map(|(start, _)| start),
-                    range.map(|(_, end)| end),
+                    range.as_ref().map(|range| range.start),
+                    range.map(|range| range.end),
                 )
                 .await
                 .map(|rows| rows.into_iter().map(EwdsTradeDto::from).collect::<Vec<_>>());
@@ -508,8 +510,8 @@ pub async fn handle_request(
             let query = (|| -> Result<_> {
                 let payload: TimeRangePayload = serde_json::from_value(envelope.payload)?;
                 Ok((
-                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
-                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+                    opt_rfc3339_to_datetime(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_datetime(payload.end_time.as_deref())?,
                     payload
                         .facility_id
                         .as_deref()
@@ -601,7 +603,11 @@ pub async fn handle_request(
                 request_id
             );
 
-            let data = db.ids().get_or_create(offchain_id).await.map(|id| vec![id]);
+            let data = db
+                .ids()
+                .get_or_create(offchain_id)
+                .await
+                .map(|id| vec![IdMappingDto::from(id)]);
             send_query_response(client, config, request_id, &response_topic, data).await
         }
         EwdsOperation::ClearingResultsQuery => {
@@ -643,8 +649,8 @@ pub async fn handle_request(
                 request_id
             );
 
-            // Market IDs use canonical hex storage; community IDs are opaque
-            // and case-sensitive. Times are stored as zero-padded epoch seconds.
+            // Market IDs are canonical UUIDv4s; community IDs are opaque and
+            // case-sensitive.
             let query = (|| -> Result<_> {
                 let payload: MarketsQueryPayload = serde_json::from_value(envelope.payload)?;
                 let market_id = payload
@@ -659,16 +665,15 @@ pub async fn handle_request(
                     .map(validate_offchain_actor_id)
                     .transpose()
                     .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
-                let stored_time = |time: Option<String>| {
-                    opt_rfc3339_to_epoch(time.as_deref())
-                        .map(|epoch| epoch.map(timestamp_to_string_with_padding))
+                let time = |time: Option<String>| {
+                    opt_rfc3339_to_datetime(time.as_deref())
                         .map_err(|e| anyhow!("markets.query payload parse error: {}", e))
                 };
                 Ok((
                     market_id,
                     community_id,
-                    stored_time(payload.start_time)?,
-                    stored_time(payload.end_time)?,
+                    time(payload.start_time)?,
+                    time(payload.end_time)?,
                 ))
             })();
             let (market_id, community_id, start_time, end_time) = match query {
@@ -792,8 +797,8 @@ pub async fn handle_request(
 
 async fn fetch_measurements_from_timeseries(
     db: &DatabaseWrapper,
-    start_time: Option<u64>,
-    end_time: Option<u64>,
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
 ) -> Result<Vec<MeasurementSchema>> {
     let points = db
         .measurement_points()
@@ -806,31 +811,22 @@ async fn fetch_measurements_from_timeseries(
 
     let values = db
         .timeseries()
-        .filter_values(
-            None,
-            start_time.map(timestamp_to_string_with_padding),
-            end_time.map(timestamp_to_string_with_padding),
-        )
+        .filter_values(None, start_time, end_time)
         .await?;
 
     Ok(values
         .into_iter()
         .filter_map(|value| {
             let point = points_by_id.get(&value.measurement_point)?;
-            let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
             Some(MeasurementSchema {
                 facility_id: point.asset_name.clone(),
                 community_uuid: point.datasource_name.clone().unwrap_or_default(),
-                time_slot,
-                creation_time: time_slot,
+                time_slot: value.timestamp,
+                creation_time: value.timestamp,
                 energy_kwh: point.signed_energy_kwh(value.value),
             })
         })
         .collect())
-}
-
-fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
-    timestamp.parse::<u64>().ok()
 }
 
 async fn send_success_response<T: Serialize>(
