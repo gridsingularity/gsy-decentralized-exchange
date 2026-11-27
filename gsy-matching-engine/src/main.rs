@@ -3,6 +3,7 @@ use gsy_matching_engine::algorithms::PayAsClearPricing;
 use gsy_matching_engine::connectors::evm_subscribe;
 use gsy_matching_engine::utils::{Cli, Commands};
 use primitives::log::setup_logging;
+use primitives::matching::ClearingSchedule;
 use primitives::MatchingAlgorithm;
 use std::env;
 use std::str::FromStr;
@@ -62,10 +63,21 @@ async fn main() -> anyhow::Result<()> {
                         "TRADE_MATCHING_ADDRESS is zero; match submissions will fail until configured."
                     );
                 }
+                let clearing_schedule = if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
+                    ClearingSchedule::from_env().unwrap_or_else(|error| panic!("{}", error))
+                } else {
+                    ClearingSchedule::default()
+                };
+
                 info!("Using off-chain storage URL: {}", offchain_storage_url);
                 info!("Using matching algorithm: {}", matching_algorithm);
                 if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
                     info!("Using pay-as-clear pricing: {}", pay_as_clear_pricing);
+                    info!(
+                        "Clearing each market {} time(s) while it is open; the last clearing takes place {} s before the closing time",
+                        clearing_schedule.clearings_per_market,
+                        clearing_schedule.final_clearing_lead_seconds
+                    );
                 }
 
                 if let Err(error) =
@@ -76,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
                         matching_engine_private_key.clone(),
                         matching_algorithm.clone(),
                         pay_as_clear_pricing,
+                        clearing_schedule,
                     )
                     .await
                 {
@@ -93,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
                                 matching_engine_private_key.clone(),
                                 matching_algorithm.clone(),
                                 pay_as_clear_pricing,
+                                clearing_schedule,
                             )
                             .await
                         {

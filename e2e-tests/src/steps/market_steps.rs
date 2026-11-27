@@ -20,7 +20,7 @@ use std::env;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 abigen!(
@@ -191,7 +191,9 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
 
     let market_controller =
         MarketControllerContract::new(world.market_controller_address, world.provider.clone());
-    let storage = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests");
+    let offchain_storage_client =
+        OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests");
+    let mut last_storage_error = None;
 
     for attempt in 0..MARKET_POLL_ATTEMPTS {
         let Some(market_id) = lookup_market_id(&market_controller, &key).await else {
@@ -205,10 +207,22 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
             .await
             .expect("Failed to read market status from MarketController");
         let stored = if is_open {
-            storage
+            // The storage rejects reads of a market while its chain events are
+            // still being projected, so an error here is retried.
+            match offchain_storage_client
                 .fetch_market(market_id_string.as_str())
                 .await
-                .expect("Failed to read market from off-chain storage")
+            {
+                Ok(stored) => stored,
+                Err(error) => {
+                    warn!(
+                        "Failed to read market {} from off-chain storage, retrying: {:#}",
+                        market_id_string, error
+                    );
+                    last_storage_error = Some(format!("{:#}", error));
+                    None
+                }
+            }
         } else {
             None
         };
@@ -263,8 +277,10 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
     }
 
     panic!(
-        "Timeout: Spot market for community {} (timeslot {}) was not open and indexed",
-        community_id, world.target_delivery_time
+        "Timeout: Spot market for community {} (timeslot {}) was not open and indexed (last storage error: {})",
+        community_id,
+        world.target_delivery_time,
+        last_storage_error.as_deref().unwrap_or("none")
     );
 }
 

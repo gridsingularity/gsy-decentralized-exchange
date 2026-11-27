@@ -37,6 +37,7 @@ contract TradeMatching is Initializable, AccessControlUpgradeable {
         uint64 penaltyEnergy
     );
     event PenaltiesSubmitted(uint256 count);
+    event PriceBoundsUpdated(uint64 priceFloor, uint64 priceCap);
     event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId);
 
     error InvalidOrderParams();
@@ -46,6 +47,9 @@ contract TradeMatching is Initializable, AccessControlUpgradeable {
     error EnergyMismatch();
     error InvalidPenalty();
     error TradedQuantityMismatch();
+    error NonUniformClearingPrice();
+    error InvalidPriceBounds();
+    error PriceOutOfBounds();
     error TradeAlreadyMatched();
     error UnknownTrade();
 
@@ -109,6 +113,28 @@ contract TradeMatching is Initializable, AccessControlUpgradeable {
     mapping(bytes16 => uint256) public penaltyEnergyByTrade;
     mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
+    /// @notice Lowest clearing price any match may carry. `0` means no floor.
+    uint64 public priceFloor;
+    /// @notice Highest clearing price any match may carry. `0` means no cap.
+    uint64 public priceCap;
+
+    /**
+     * @notice Configure the price band every match must fall within.
+     * @dev Prices are the scaled integer rates used on-chain. A cap of `0`
+     *      disables the cap; a floor of `0` disables the floor.
+     */
+    function setPriceBounds(
+        uint64 _priceFloor,
+        uint64 _priceCap
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_priceCap != 0 && _priceFloor > _priceCap) {
+            revert InvalidPriceBounds();
+        }
+        priceFloor = _priceFloor;
+        priceCap = _priceCap;
+        emit PriceBoundsUpdated(_priceFloor, _priceCap);
+    }
+
     struct MatchedTrade {
         bytes16 bidId;
         bytes16 offerId;
@@ -139,8 +165,26 @@ contract TradeMatching is Initializable, AccessControlUpgradeable {
                 revert TradedQuantityMismatch();
             }
 
+            // Uniform pricing (pay-as-clear markets): every Standard match of
+            // the batch must carry one and the same price. Preferred matches
+            // are bilateral and keep their own negotiated rate.
+            bool uniform = registry.marketController().getMatchingAlgorithm(
+                batch.clearingResult.marketId
+            ) == MarketController.MatchingAlgorithm.PayAsClear;
+            bool uniformPriceSet;
+            uint256 uniformPrice;
+
             for (uint256 i = 0; i < batch.matches.length; i++) {
-                _recordMatch(batch.matches[i]);
+                Match calldata trade = batch.matches[i];
+                if (uniform && trade.matchType == MatchType.Standard) {
+                    if (!uniformPriceSet) {
+                        uniformPrice = trade.clearingPrice;
+                        uniformPriceSet = true;
+                    } else if (trade.clearingPrice != uniformPrice) {
+                        revert NonUniformClearingPrice();
+                    }
+                }
+                _recordMatch(trade);
             }
 
             emit MarketClearing(
@@ -267,6 +311,7 @@ contract TradeMatching is Initializable, AccessControlUpgradeable {
         if (matchedTrades[trade.tradeId].bidId != bytes16(0)) revert TradeAlreadyMatched();
 
         _validateMatch(trade);
+        _validatePriceBounds(trade.clearingPrice);
 
         if (
             trade.selectedEnergy == 0 ||
@@ -329,6 +374,12 @@ contract TradeMatching is Initializable, AccessControlUpgradeable {
             trade.clearingPrice < offerRate
         ) {
             revert PriceMismatch();
+        }
+    }
+
+    function _validatePriceBounds(uint256 price) internal view {
+        if (price < priceFloor || (priceCap != 0 && price > priceCap)) {
+            revert PriceOutOfBounds();
         }
     }
 
