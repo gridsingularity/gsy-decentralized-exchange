@@ -15,7 +15,7 @@ use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::ewds::dto::{EwdsMarketDto, FacilityMarketValidationRequest};
-use primitives::matching::{current_unix_time, matching_block_interval, ClearingSchedule};
+use primitives::matching::{current_unix_time, ClearingSchedule};
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use primitives::MatchingAlgorithm;
 use primitives::utils::{
@@ -135,32 +135,13 @@ abigen!(
     ]"#
 );
 
-async fn mine_empty_blocks(world: &MyWorld, count: usize) {
-    for _ in 0..count {
-        world
-            .provider
-            .request::<_, U256>("evm_mine", None::<()>)
-            .await
-            .expect("Failed to mine an empty Anvil block");
-    }
-}
-
-/// Seconds between two clearings of a spot market, when the stack runs
-/// pay-as-clear. The matching engine then clears on this schedule and not on
-/// block boundaries.
+/// Seconds between two clearings of a Spot market. The matching engine clears
+/// every market on this schedule, whatever its matching algorithm.
 ///
 /// The spot markets open on the quarter hours, so with an interval that
 /// divides the market window and the quarter hour, every multiple of the
 /// interval is a clearing time of every open market.
-fn pay_as_clear_clearing_interval() -> Option<u64> {
-    let matching_algorithm = env::var("MATCHING_ALGORITHM")
-        .ok()
-        .and_then(|value| value.parse::<MatchingAlgorithm>().ok())
-        .unwrap_or_default();
-    if !matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
-        return None;
-    }
-
+fn clearing_interval() -> u64 {
     let schedule = ClearingSchedule::from_env().expect("Invalid clearing schedule");
     let window_seconds = ((GLOBAL_CONSTANTS.spot_market_close_offset_min
         - GLOBAL_CONSTANTS.spot_market_open_offset_min)
@@ -174,7 +155,7 @@ fn pay_as_clear_clearing_interval() -> Option<u64> {
         schedule.clearings_per_market,
         window_seconds
     );
-    Some(interval)
+    interval
 }
 
 /// Seconds the matching engine gets to clear and submit matches after a clearing time.
@@ -182,83 +163,29 @@ const CLEARING_MARGIN_SECONDS: u64 = 5;
 /// Seconds one order needs to reach the off-chain storage.
 const ORDER_SUBMISSION_SECONDS: u64 = 3;
 
-async fn wait_for_next_clearing(interval: u64) {
-    let now = current_unix_time();
-    let wait = interval - now % interval + CLEARING_MARGIN_SECONDS;
-    info!("Waiting {} s for the next pay-as-clear clearing", wait);
+/// Waits until the matching engine has run the next clearing.
+pub(crate) async fn wait_for_next_clearing() {
+    let interval = clearing_interval();
+    let wait = interval - current_unix_time() % interval + CLEARING_MARGIN_SECONDS;
+    info!("Waiting {} s for the next clearing", wait);
     sleep(Duration::from_secs(wait)).await;
 }
 
-/// Triggers a matching run: mines up to the next matching block for
-/// pay-as-bid, waits for the next clearing time for pay-as-clear.
-pub(crate) async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
-    if let Some(interval) = pay_as_clear_clearing_interval() {
-        wait_for_next_clearing(interval).await;
-        return;
-    }
-
-    let matching_block_interval = matching_block_interval();
-    for _ in 0..max_blocks {
-        mine_empty_blocks(world, 1).await;
-        let latest_block = world
-            .provider
-            .get_block_number()
-            .await
-            .expect("Failed to read latest block after mining");
-        if latest_block.as_u64() % matching_block_interval == 0 {
-            info!(
-                "Reached matching trigger block {} (mod {} == 0)",
-                latest_block, matching_block_interval
-            );
-            return;
-        }
-    }
-
-    panic!(
-        "Could not reach a matching trigger block after mining {} blocks",
-        max_blocks
-    );
-}
-
-/// Makes sure that an order book of `required_blocks` orders (one block each)
-/// can be submitted before the next matching run.
-pub(crate) async fn align_to_matching_window(world: &MyWorld, required_blocks: u64) {
-    if let Some(interval) = pay_as_clear_clearing_interval() {
-        let required_seconds = required_blocks * ORDER_SUBMISSION_SECONDS;
-        assert!(
-            required_seconds < interval,
-            "A {}-order submission cannot fit in a {} s clearing interval",
-            required_blocks,
-            interval
-        );
-        if interval - current_unix_time() % interval <= required_seconds {
-            wait_for_next_clearing(interval).await;
-        }
-        return;
-    }
-
-    let matching_block_interval = matching_block_interval();
+/// Makes sure that `order_count` orders can be submitted before the next
+/// clearing, so that one clearing sees all of them.
+pub(crate) async fn align_to_matching_window(order_count: u64) {
+    let interval = clearing_interval();
+    let required_seconds = order_count * ORDER_SUBMISSION_SECONDS;
+    // After waiting for a clearing, the next one is the interval minus the
+    // margin away.
     assert!(
-        required_blocks < matching_block_interval,
-        "A {}-block order submission cannot fit in a {}-block matching interval",
-        required_blocks,
-        matching_block_interval
+        required_seconds + CLEARING_MARGIN_SECONDS < interval,
+        "A {}-order submission cannot fit in a {} s clearing interval",
+        order_count,
+        interval
     );
-
-    let latest_block = world
-        .provider
-        .get_block_number()
-        .await
-        .expect("Failed to read latest block before submitting the order book")
-        .as_u64();
-    let blocks_until_trigger = matching_block_interval - (latest_block % matching_block_interval);
-
-    if blocks_until_trigger <= required_blocks {
-        info!(
-            "Only {} blocks remain in the current matching interval; advancing to the next boundary",
-            blocks_until_trigger
-        );
-        mine_until_matching_block(world, matching_block_interval as usize + 1).await;
+    if interval - current_unix_time() % interval <= required_seconds {
+        wait_for_next_clearing().await;
     }
 }
 
@@ -547,7 +474,7 @@ async fn submit_cross_community_orders(world: &mut MyWorld) {
     let market_ids = world
         .community_market_ids
         .expect("Missing community market ids");
-    align_to_matching_window(world, 2).await;
+    align_to_matching_window(2).await;
 
     let primary_bid =
         place_custom_order_for_market(world, market_ids[0], "alice", true, 2.0, 20.0, None, None)
@@ -570,7 +497,7 @@ async fn submit_cross_community_orders(world: &mut MyWorld) {
     .await;
 
     world.cross_community_order_ids = Some((primary_bid, secondary_offer));
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    wait_for_next_clearing().await;
 }
 
 #[then("no cross-community trade is matched")]
@@ -623,7 +550,7 @@ async fn submit_community_market_counterparts(world: &mut MyWorld) {
         .cross_community_order_ids
         .clone()
         .expect("Missing cross-community order ids");
-    align_to_matching_window(world, 2).await;
+    align_to_matching_window(2).await;
 
     let primary_offer = place_custom_order_for_market(
         world,
@@ -665,7 +592,7 @@ async fn submit_community_market_counterparts(world: &mut MyWorld) {
             offer_id: secondary_offer,
         },
     ];
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    wait_for_next_clearing().await;
 }
 
 #[then("each community market matches only its own bid and offer")]
@@ -686,9 +613,9 @@ async fn verify_community_market_matches(world: &mut MyWorld) {
     for attempt in 0..COMMUNITY_TRADE_POLL_ATTEMPTS {
         if attempt > 0 && attempt % COMMUNITY_MATCHING_RETRIGGER_INTERVAL == 0 {
             info!(
-                "Community-market trades are still pending; advancing to another matching boundary"
+                "Community-market trades are still pending; waiting for another clearing"
             );
-            mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+            wait_for_next_clearing().await;
         }
 
         let scenario_trades = query_community_market_trades(world)
@@ -854,9 +781,8 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
     .await
     .expect("Failed to publish offer order");
 
-    // Matching runs on block boundaries. Fast-forward local Anvil after both
-    // orders are present in the registry.
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    // The orders are matched at the next clearing time.
+    wait_for_next_clearing().await;
 }
 
 // Offers name their preferred partner the same way bids do: in requirements.
@@ -929,7 +855,7 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
     world.last_charlie_offer_order_id = Some(order_id);
 
     // Trigger matching after all preference/open-market orders were submitted.
-    mine_until_matching_block(world, 12).await;
+    wait_for_next_clearing().await;
 }
 
 #[when("the pay-as-clear order book is submitted")]
@@ -939,16 +865,17 @@ async fn submit_pay_as_clear_order_book(world: &mut MyWorld) {
 
 #[when(expr = "the pay-as-clear order book with {string} is submitted")]
 async fn submit_pay_as_clear_order_book_with(world: &mut MyWorld, book: String) {
-    // A uniform-price auction must observe the complete book in one interval.
-    align_to_matching_window(world, 8).await;
+    // A uniform-price auction must observe the complete book (up to six
+    // orders) in one clearing.
+    align_to_matching_window(6).await;
     world.pay_as_clear_scenario = Some(place_standard_pay_as_clear_order_book(world, &book).await);
 
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    wait_for_next_clearing().await;
 }
 
 #[when("the next matching cycle is triggered")]
-async fn trigger_matching_cycle(world: &mut MyWorld) {
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+async fn trigger_matching_cycle(_world: &mut MyWorld) {
+    wait_for_next_clearing().await;
 }
 
 async fn place_standard_pay_as_clear_order_book(world: &MyWorld, book: &str) -> PayAsClearScenario {
@@ -994,8 +921,8 @@ async fn place_standard_pay_as_clear_order_book(world: &MyWorld, book: &str) -> 
 
 #[when("a preferred bilateral pair and standard pay-as-clear order book are submitted")]
 async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
-    // Submit both pricing paths before reaching the same clearing boundary.
-    align_to_matching_window(world, 12).await;
+    // Submit both pricing paths (eight orders) before the same clearing.
+    align_to_matching_window(8).await;
 
     let preferred_bid_requirements = DbRequirements {
         trading_partner_id: Some("bob".to_string()),
@@ -1034,7 +961,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     scenario.preferred_order_ids = Some((preferred_bid, preferred_offer));
     world.pay_as_clear_scenario = Some(scenario);
 
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    wait_for_next_clearing().await;
 }
 
 #[when(expr = "measurements for facilities are submitted")]
@@ -1648,7 +1575,7 @@ async fn submit_preference_policy_pair(
             preferred_energy_rate: (rate != 0.0).then_some(rate),
         })
     };
-    align_to_matching_window(world, 2).await;
+    align_to_matching_window(2).await;
     let bid_id = place_custom_order(
         world,
         "alice",
@@ -1672,7 +1599,7 @@ async fn submit_preference_policy_pair(
     wait_for_order_in_offchain_storage(world, &bid_id).await;
     wait_for_order_in_offchain_storage(world, &offer_id).await;
     world.preference_order_ids = Some((bid_id, offer_id));
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    wait_for_next_clearing().await;
 }
 
 #[then(expr = "the pair is matched as {string} at {float} for pay-as-bid or max_offer {float}, min_bid {float}, midpoint {float} for pay-as-clear")]
@@ -1689,10 +1616,9 @@ async fn verify_preference_policy_pair(
         "preferred" => 1,
         _ => panic!("Unknown expected match type: {match_type}"),
     };
-    let algorithm = env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| "pay_as_bid".into());
-    let expected_price = match algorithm.parse::<primitives::MatchingAlgorithm>().unwrap() {
-        primitives::MatchingAlgorithm::PayAsBid => pay_as_bid,
-        primitives::MatchingAlgorithm::PayAsClear => {
+    let expected_price = match world.matching_algorithm {
+        MatchingAlgorithm::PayAsBid => pay_as_bid,
+        MatchingAlgorithm::PayAsClear => {
             match env::var("PAY_AS_CLEAR_PRICING").unwrap_or_else(|_| "max_offer".into())
                 .trim().to_ascii_lowercase().as_str() {
                 "max_offer" => max_offer,
@@ -1760,7 +1686,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     assert!(matches!(consumption.as_str(), "same-batch" | "later-cycle"));
     let is_bid = side == "bid";
     let later = consumption == "later-cycle";
-    align_to_matching_window(world, 3).await;
+    align_to_matching_window(3).await;
     let bid_id = place_custom_order(
         world,
         "alice",
@@ -1797,7 +1723,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         .expect("Failed to read original order");
 
     if later {
-        mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+        wait_for_next_clearing().await;
         verify_partner_trade(world, "alice".into(), "bob".into(), 2.0).await;
         verify_preferred_residual(world, side.clone(), 4.0).await;
         let first = world.last_trade.as_ref().unwrap();
@@ -1823,7 +1749,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     // The second pair has no matching partner preference, so it uses the standard phase.
     let counter_id = place_custom_order(world, "charlie", !is_bid, 4.0, 12.0, None, None).await;
     wait_for_order_in_offchain_storage(world, &counter_id).await;
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    wait_for_next_clearing().await;
 
     let mut chain = None;
     for _ in 0..60 {

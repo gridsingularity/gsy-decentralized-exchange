@@ -10,7 +10,7 @@ use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
 use primitives::offchain_storage::CommunityProvider;
 use primitives::utils::{hex_to_bytes16, derive_onchain_id, uuid_v4_to_bytes16};
-use primitives::MarketType;
+use primitives::{MarketType, MatchingAlgorithm};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use uuid::{Uuid, Variant, Version};
@@ -355,6 +355,41 @@ async fn creates_every_market_of_the_look_ahead_window() {
     assert!(expected.len() > communities.len() * MARKET_RULES.len());
     assert_eq!(client.batches().len(), 1);
     assert_market_records(&client.created(), &expected);
+}
+
+#[tokio::test]
+async fn spot_markets_clear_pay_as_clear_and_the_others_pay_as_bid() {
+    let config = test_config(2);
+    let client = MockChainClient::default();
+
+    orchestrate_markets_at(&config, &client, &[community()], NOW)
+        .await
+        .expect("orchestration should succeed");
+
+    let mut algorithms: HashMap<u8, HashSet<u8>> = HashMap::new();
+    for market in client.created() {
+        algorithms
+            .entry(market.market_type)
+            .or_default()
+            .insert(market.matching_algorithm);
+    }
+    assert_eq!(
+        algorithms,
+        HashMap::from([
+            (
+                MarketType::Spot.to_evm(),
+                HashSet::from([MatchingAlgorithm::PayAsClear.to_evm()])
+            ),
+            (
+                MarketType::Flex.to_evm(),
+                HashSet::from([MatchingAlgorithm::PayAsBid.to_evm()])
+            ),
+            (
+                MarketType::Settlement.to_evm(),
+                HashSet::from([MatchingAlgorithm::PayAsBid.to_evm()])
+            ),
+        ])
+    );
 }
 
 #[tokio::test]

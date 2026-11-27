@@ -10,7 +10,7 @@ use primitives::db_api_schema::orders::{
 use primitives::db_api_schema::trades::ClearingStatus;
 use primitives::ewds::dto::{order_status_from_ewds, EwdsOrderDto};
 use primitives::ewds::{EwdsClient, EwdsOperation};
-use primitives::matching::{current_unix_time, matching_block_interval, ClearingSchedule};
+use primitives::matching::{current_unix_time, ClearingSchedule};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
     bytes16_to_uuid_string, datetime_to_epoch, derive_onchain_id, hex_to_bytes16, normalize_uuid,
@@ -60,102 +60,34 @@ pub async fn evm_subscribe(
     node_url: String,
     trade_matching_address: String,
     matching_engine_private_key: String,
-    matching_algorithm: MatchingAlgorithm,
+    offchain_storage_client: &OffchainStorageClient,
     pay_as_clear_pricing: PayAsClearPricing,
     clearing_schedule: ClearingSchedule,
 ) -> Result<(), Error> {
     info!("Connecting to EVM node {}", node_url);
-    let provider = Provider::<Ws>::connect(node_url.as_str()).await?;
-    if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
-        // Pay-as-clear markets are cleared at times derived from their own
-        // opening and closing time, not on block boundaries.
-        drop(provider);
-        return run_clearing_schedule(
-            orderbook_url.as_str(),
-            node_url.as_str(),
-            trade_matching_address.as_str(),
-            matching_engine_private_key.as_str(),
-            pay_as_clear_pricing,
-            clearing_schedule,
-        )
-        .await;
-    }
-    let matching_block_interval = matching_block_interval();
-    info!(
-        "Using {}-block matching interval for {}",
-        matching_block_interval, matching_algorithm
-    );
-    let mut last_processed_block = provider.get_block_number().await?;
-    // Keep track of which trigger "bucket" was already processed, so we do not
-    // miss matches when multiple blocks are mined between polling iterations.
-    let mut last_processed_trigger_bucket =
-        last_processed_block.as_u64().saturating_sub(1) / matching_block_interval;
-
-    loop {
-        let block_number = provider.get_block_number().await?;
-        if block_number > last_processed_block {
-            info!("Block {} observed", block_number);
-
-            let current_trigger_bucket = block_number.as_u64() / matching_block_interval;
-            if current_trigger_bucket > last_processed_trigger_bucket {
-                info!(
-                    "Matching trigger reached (bucket {} -> {}) at block {}",
-                    last_processed_trigger_bucket, current_trigger_bucket, block_number
-                );
-
-                if let Err(error) = run_matching_cycle(
-                    orderbook_url.as_str(),
-                    node_url.as_str(),
-                    trade_matching_address.as_str(),
-                    matching_engine_private_key.as_str(),
-                    &matching_algorithm,
-                    pay_as_clear_pricing,
-                )
-                .await
-                {
-                    error!("Matching cycle failed: {:?}", error);
-                }
-
-                last_processed_trigger_bucket = current_trigger_bucket;
-            }
-
-            last_processed_block = block_number;
-        }
-
-        sleep(Duration::from_secs(2)).await;
-    }
-}
-
-async fn run_matching_cycle(
-    orderbook_url: &str,
-    evm_node_url: &str,
-    trade_matching_address: &str,
-    matching_engine_private_key: &str,
-    matching_algorithm: &MatchingAlgorithm,
-    pay_as_clear_pricing: PayAsClearPricing,
-) -> Result<()> {
-    info!("Starting matching cycle");
-    info!("Fetching open orders from {}", orderbook_url);
-
-    let prepared_orders =
-        fetch_open_orders_from_orderbook_service(orderbook_url.to_string()).await?;
-    match_and_submit(
-        prepared_orders,
-        evm_node_url,
-        trade_matching_address,
-        matching_engine_private_key,
-        matching_algorithm,
+    // Fails at startup if the node cannot be reached. Every submission opens
+    // its own connection.
+    Provider::<Ws>::connect(node_url.as_str()).await?;
+    run_clearing_schedule(
+        orderbook_url.as_str(),
+        node_url.as_str(),
+        trade_matching_address.as_str(),
+        matching_engine_private_key.as_str(),
+        offchain_storage_client,
         pay_as_clear_pricing,
+        clearing_schedule,
     )
     .await
 }
 
+/// Matches every order book with the matching algorithm of its market and
+/// submits all matches in one `submitMatches` transaction.
 async fn match_and_submit(
     prepared_orders: PreparedOrders,
     evm_node_url: &str,
     trade_matching_address: &str,
     matching_engine_private_key: &str,
-    matching_algorithm: &MatchingAlgorithm,
+    markets: &HashMap<String, TrackedMarket>,
     pay_as_clear_pricing: PayAsClearPricing,
 ) -> Result<()> {
     info!(
@@ -179,18 +111,21 @@ async fn match_and_submit(
         order_books.len()
     );
 
-    let matches_per_market =
-        match_order_books(order_books, matching_algorithm, pay_as_clear_pricing)?;
+    let mut matches_per_market = Vec::new();
+    for (matching_algorithm, order_books) in group_by_matching_algorithm(order_books, markets) {
+        let matches = match_order_books(order_books, &matching_algorithm, pay_as_clear_pricing)?;
+        info!(
+            "Generated matches for {} markets using {}",
+            matches.len(),
+            matching_algorithm
+        );
+        matches_per_market.extend(matches);
+    }
     if matches_per_market.is_empty() {
-        info!("No matches generated by {} algorithm", matching_algorithm);
+        info!("No matches generated");
         return Ok(());
     }
 
-    info!(
-        "Generated matches for {} markets using {}",
-        matches_per_market.len(),
-        matching_algorithm
-    );
     send_submit_matches_transaction(
         evm_node_url,
         trade_matching_address,
@@ -205,9 +140,10 @@ async fn match_and_submit(
 /// How often the open orders are read to find markets that are not known yet.
 const MARKET_DISCOVERY_INTERVAL_SECONDS: u64 = 5;
 
-/// The open window of a market with open orders.
+/// A market with open orders, as its market record describes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MarketWindow {
+pub struct TrackedMarket {
+    pub matching_algorithm: MatchingAlgorithm,
     pub opening_time: u64,
     pub closing_time: u64,
     /// Clearing times up to this time were already handled.
@@ -215,16 +151,18 @@ pub struct MarketWindow {
 }
 
 /// The markets that have a clearing time in `(checked_until, now]` and are
-/// still open at `now`.
+/// still open at `now`. Markets that use `amm` are never due, because the
+/// engine does not implement that algorithm.
 pub fn markets_due_for_clearing(
-    markets: &HashMap<String, MarketWindow>,
+    markets: &HashMap<String, TrackedMarket>,
     clearing_schedule: &ClearingSchedule,
     now: u64,
 ) -> HashSet<String> {
     markets
         .iter()
         .filter(|(_, market)| {
-            now < market.closing_time
+            market.matching_algorithm != MatchingAlgorithm::AMM
+                && now < market.closing_time
                 && clearing_schedule.is_clearing_due(
                     market.opening_time,
                     market.closing_time,
@@ -236,8 +174,31 @@ pub fn markets_due_for_clearing(
         .collect()
 }
 
-/// Clears every pay-as-clear market at the times `clearing_schedule` derives
-/// from the opening and closing time of the market.
+/// Groups the order books by the matching algorithm of their market. Books of
+/// markets that are not tracked are left out.
+pub fn group_by_matching_algorithm(
+    order_books: Vec<MatchingData>,
+    markets: &HashMap<String, TrackedMarket>,
+) -> HashMap<MatchingAlgorithm, Vec<MatchingData>> {
+    let mut groups: HashMap<MatchingAlgorithm, Vec<MatchingData>> = HashMap::new();
+    for order_book in order_books {
+        match markets.get(order_book.market_id()) {
+            Some(market) => groups
+                .entry(market.matching_algorithm)
+                .or_default()
+                .push(order_book),
+            None => warn!(
+                "Skipping the order book of market {}, which is not tracked",
+                order_book.market_id()
+            ),
+        }
+    }
+    groups
+}
+
+/// Clears every market at the times `clearing_schedule` derives from the
+/// opening and closing time of the market, with the matching algorithm of its
+/// market record.
 ///
 /// The clock is checked every second. Markets are found through their open
 /// orders, so a market without orders is not cleared. A clearing whose orders
@@ -248,12 +209,11 @@ async fn run_clearing_schedule(
     evm_node_url: &str,
     trade_matching_address: &str,
     matching_engine_private_key: &str,
+    offchain_storage_client: &OffchainStorageClient,
     pay_as_clear_pricing: PayAsClearPricing,
     clearing_schedule: ClearingSchedule,
 ) -> Result<()> {
-    let offchain_storage_client =
-        OffchainStorageClient::from_env("EWDS_MATCHING_ENGINE_CLIENT_ID", "gsymatchingengine");
-    let mut markets: HashMap<String, MarketWindow> = HashMap::new();
+    let mut markets: HashMap<String, TrackedMarket> = HashMap::new();
     // Clearing times before the start are not made up for.
     let mut last_discovery = current_unix_time();
     let mut next_discovery = last_discovery;
@@ -270,7 +230,7 @@ async fn run_clearing_schedule(
                     // previous discovery, so its clearing times since then
                     // are still due.
                     discover_markets(
-                        &offchain_storage_client,
+                        offchain_storage_client,
                         &orders,
                         &mut markets,
                         last_discovery,
@@ -283,7 +243,6 @@ async fn run_clearing_schedule(
             }
         }
 
-        markets.retain(|_, market| now < market.closing_time);
         let due_markets = markets_due_for_clearing(&markets, &clearing_schedule, now);
         for (market_id, market) in markets.iter_mut() {
             if !due_markets.contains(market_id) {
@@ -315,7 +274,7 @@ async fn run_clearing_schedule(
                         evm_node_url,
                         trade_matching_address,
                         matching_engine_private_key,
-                        &MatchingAlgorithm::PayAsClear,
+                        &markets,
                         pay_as_clear_pricing,
                     )
                     .await
@@ -332,22 +291,29 @@ async fn run_clearing_schedule(
     }
 }
 
-/// Adds the markets of `orders` that are not in `markets` yet.
+/// Tracks the markets of the open `orders`. Markets that no open order refers
+/// to any more are dropped. Markets that are not tracked yet are added from
+/// their record in the off-chain storage; a market whose record cannot be read
+/// is left out and fetched again at the next discovery. A closed market stays
+/// tracked while it has open orders, so that it is not fetched again.
 async fn discover_markets(
     offchain_storage_client: &OffchainStorageClient,
     orders: &PreparedOrders,
-    markets: &mut HashMap<String, MarketWindow>,
+    markets: &mut HashMap<String, TrackedMarket>,
     checked_until: u64,
 ) {
-    let unknown_market_ids: HashSet<&String> = orders
+    let order_market_ids: HashSet<&String> = orders
         .open_bids
         .iter()
         .chain(orders.open_offers.iter())
         .map(|order| &order.market_id)
-        .filter(|market_id| !markets.contains_key(*market_id))
         .collect();
+    markets.retain(|market_id, _| order_market_ids.contains(market_id));
 
-    for market_id in unknown_market_ids {
+    for market_id in order_market_ids {
+        if markets.contains_key(market_id) {
+            continue;
+        }
         let market = match offchain_storage_client.fetch_market(market_id).await {
             Ok(Some(market)) => market,
             Ok(None) => {
@@ -359,18 +325,25 @@ async fn discover_markets(
                 continue;
             }
         };
+        if market.matching_algorithm == MatchingAlgorithm::AMM {
+            warn!(
+                "Market {} uses the matching algorithm {}, which is not implemented; its orders are not matched",
+                market_id, market.matching_algorithm
+            );
+        }
         match (
             datetime_to_epoch(&market.opening_time),
             datetime_to_epoch(&market.closing_time),
         ) {
             (Ok(opening_time), Ok(closing_time)) => {
                 info!(
-                    "Market {} is open from {} to {}",
-                    market_id, opening_time, closing_time
+                    "Market {} ({}) is open from {} to {}",
+                    market_id, market.matching_algorithm, opening_time, closing_time
                 );
                 markets.insert(
                     market_id.clone(),
-                    MarketWindow {
+                    TrackedMarket {
+                        matching_algorithm: market.matching_algorithm,
                         opening_time,
                         closing_time,
                         checked_until,
@@ -974,3 +947,7 @@ mod residual_conversion_tests;
 #[cfg(test)]
 #[path = "../../tests/connectors/order_books.rs"]
 mod order_book_tests;
+
+#[cfg(test)]
+#[path = "../../tests/connectors/markets.rs"]
+mod market_tests;

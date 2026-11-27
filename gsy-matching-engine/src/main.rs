@@ -4,9 +4,8 @@ use gsy_matching_engine::connectors::evm_subscribe;
 use gsy_matching_engine::utils::{Cli, Commands};
 use primitives::log::setup_logging;
 use primitives::matching::ClearingSchedule;
-use primitives::MatchingAlgorithm;
+use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use std::env;
-use std::str::FromStr;
 use std::{thread, time};
 use tracing::{error, info};
 
@@ -42,43 +41,37 @@ async fn main() -> anyhow::Result<()> {
                         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                             .to_string()
                     });
-                let matching_algorithm = env::var("MATCHING_ALGORITHM")
-                    .unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
-                let matching_algorithm = MatchingAlgorithm::from_str(&matching_algorithm)
-                    .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error));
-                let pay_as_clear_pricing = if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
-                    let value = match env::var("PAY_AS_CLEAR_PRICING") {
-                        Ok(value) => value,
-                        Err(env::VarError::NotPresent) => PayAsClearPricing::default().to_string(),
-                        Err(error) => panic!("Invalid PAY_AS_CLEAR_PRICING: {}", error),
-                    };
-                    value.parse::<PayAsClearPricing>()
-                        .unwrap_or_else(|error| panic!("Invalid PAY_AS_CLEAR_PRICING: {}", error))
-                } else {
-                    PayAsClearPricing::default()
-                };
+                // Any market can use pay-as-clear, so the pricing is always validated.
+                let pay_as_clear_pricing = match env::var("PAY_AS_CLEAR_PRICING") {
+                    Ok(value) => value,
+                    Err(env::VarError::NotPresent) => PayAsClearPricing::default().to_string(),
+                    Err(error) => panic!("Invalid PAY_AS_CLEAR_PRICING: {}", error),
+                }
+                .parse::<PayAsClearPricing>()
+                .unwrap_or_else(|error| panic!("Invalid PAY_AS_CLEAR_PRICING: {}", error));
 
                 if trade_matching_address == "0x0000000000000000000000000000000000000000" {
                     info!(
                         "TRADE_MATCHING_ADDRESS is zero; match submissions will fail until configured."
                     );
                 }
-                let clearing_schedule = if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
-                    ClearingSchedule::from_env().unwrap_or_else(|error| panic!("{}", error))
-                } else {
-                    ClearingSchedule::default()
-                };
+                let clearing_schedule =
+                    ClearingSchedule::from_env().unwrap_or_else(|error| panic!("{}", error));
+                let offchain_storage_client = OffchainStorageClient::new(
+                    OffchainStorageTransport::from_env(),
+                    offchain_storage_url.clone(),
+                    "EWDS_MATCHING_ENGINE_CLIENT_ID",
+                    "gsymatchingengine",
+                );
 
                 info!("Using off-chain storage URL: {}", offchain_storage_url);
-                info!("Using matching algorithm: {}", matching_algorithm);
-                if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
-                    info!("Using pay-as-clear pricing: {}", pay_as_clear_pricing);
-                    info!(
-                        "Clearing each market {} time(s) while it is open; the last clearing takes place {} s before the closing time",
-                        clearing_schedule.clearings_per_market,
-                        clearing_schedule.final_clearing_lead_seconds
-                    );
-                }
+                info!("Matching each market with the matching algorithm of its market record");
+                info!("Using pay-as-clear pricing: {}", pay_as_clear_pricing);
+                info!(
+                    "Clearing each market {} time(s) while it is open; the last clearing takes place {} s before the closing time",
+                    clearing_schedule.clearings_per_market,
+                    clearing_schedule.final_clearing_lead_seconds
+                );
 
                 if let Err(error) =
                     evm_subscribe(
@@ -86,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
                         node_url.clone(),
                         trade_matching_address.clone(),
                         matching_engine_private_key.clone(),
-                        matching_algorithm.clone(),
+                        &offchain_storage_client,
                         pay_as_clear_pricing,
                         clearing_schedule,
                     )
@@ -104,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
                                 node_url.clone(),
                                 trade_matching_address.clone(),
                                 matching_engine_private_key.clone(),
-                                matching_algorithm.clone(),
+                                &offchain_storage_client,
                                 pay_as_clear_pricing,
                                 clearing_schedule,
                             )

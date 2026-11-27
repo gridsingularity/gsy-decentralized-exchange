@@ -6,9 +6,7 @@ mod world;
 use anyhow::Result;
 use cucumber::World as _;
 use mongodb::options::ClientOptions;
-use primitives::MatchingAlgorithm;
 use std::env;
-use std::str::FromStr;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::info;
@@ -75,29 +73,15 @@ async fn main() {
     sleep(Duration::from_secs(30)).await;
     wait_for_offchain_storage().await;
 
-    let matching_algorithm =
-        env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
-    let matching_algorithm = MatchingAlgorithm::from_str(&matching_algorithm)
-        .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error));
     let feature_override = env::var("E2E_FEATURE_PATH").ok();
-    let feature_selection = feature_override.clone().unwrap_or_else(|| {
-        format!(
-            "features/{} and features/matching_algorithms",
-            matching_algorithm.as_str()
-        )
-    });
+    let selection = feature_override
+        .clone()
+        .unwrap_or_else(|| feature_selection::DEFAULT_FEATURES.to_string());
     let mut cli = cucumber::cli::Opts::<cucumber::parser::basic::Cli, _, _>::parsed();
-    feature_selection::configure_features(
-        &mut cli.parser,
-        &matching_algorithm,
-        feature_override.as_deref(),
-    );
+    feature_selection::configure_features(&mut cli.parser, feature_override.as_deref());
     let feature_path = feature_override.unwrap_or_else(|| "features".to_string());
 
-    println!(
-        "Running {} E2E feature(s) from {}",
-        matching_algorithm, feature_selection
-    );
+    println!("Running E2E feature(s) from {}", selection);
 
     // @ewds features publish EWDS events, so they only run with the EWDS transport.
     let ewds_transport = env::var("OFFCHAIN_STORAGE_TRANSPORT")
@@ -107,6 +91,12 @@ async fn main() {
     world::MyWorld::cucumber()
         .with_cli(cli)
         .max_concurrent_scenarios(1)
+        .before(|feature, _rule, _scenario, world| {
+            Box::pin(async move {
+                world.matching_algorithm =
+                    feature_selection::matching_algorithm_of(feature.path.as_deref());
+            })
+        })
         .after(|_feature, _rule, _scenario, _ev, _world| {
             Box::pin(async move {
                 delete_database()

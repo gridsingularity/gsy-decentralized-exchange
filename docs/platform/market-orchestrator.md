@@ -25,7 +25,7 @@ closing time, so there is no open/close step.
 7. Only for an absent tuple, generate a random UUIDv4 `marketId` once for the
    candidate and build its record: community hash, opening/closing time from
    the market-type offsets, delivery start/end (`+ TIME_SLOT_SEC`), market type
-   and matching algorithm. Send candidates through `createMarkets` in batches
+   and the market type's matching algorithm (see below). Send candidates through `createMarkets` in batches
    of at most `MARKET_CREATION_BATCH_SIZE`. Duplicate tuples, including races
    with pending transactions, are skipped; an ID collision with a different
    tuple is rejected.
@@ -48,6 +48,20 @@ Callers look up the existing tuple rather than reconstructing its market ID.
 Once created, that ID is reused across ticks and restarts. Storage represents
 it as a lowercase UUIDv4; HTTP and EWDS use the same format and preserve the original opaque community ID.
 
+## Matching Algorithms
+
+Each market type has a fixed matching algorithm, held in `MARKET_RULES` and
+written into every market record. The matching engine clears each market with
+the algorithm of its record.
+
+| Market type | Matching algorithm |
+|---|---|
+| Spot | `pay_as_clear` |
+| Flex | `pay_as_bid` |
+| Settlement | `pay_as_bid` |
+
+The algorithms are not configurable; `MATCHING_ALGORITHM` is no longer read.
+
 ## Configurable Parameters
 
 - `EVM_NODE_URL`
@@ -57,9 +71,6 @@ it as a lowercase UUIDv4; HTTP and EWDS use the same format and preserve the ori
 - `TICK_INTERVAL_SECONDS`
 - `LOOK_AHEAD_HOURS`: how far ahead opening times are considered
 - `MARKET_CREATION_BATCH_SIZE` (default `50`, must be greater than `0`)
-- `MATCHING_ALGORITHM` (default `pay_as_bid`): written into every market
-  record; set it to the value the matching engine uses. It is held per
-  market type in `MARKET_RULES` and is the same for all types today.
 - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`)
 - `OFFCHAIN_STORAGE_URL`
 - `EWDS_MARKET_ORCHESTRATOR_CLIENT_ID`
