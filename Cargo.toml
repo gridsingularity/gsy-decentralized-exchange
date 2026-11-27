@@ -23,6 +23,7 @@ gsy-ethers-listener = { path = "gsy-ethers-listener" }
 
 anyhow = "1"
 async-trait = "0.1.89"
+bson = { version = "2.15", features = ["chrono-0_4"] }
 chrono = { version = "0.4.37", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 ethers = "2.0.14"

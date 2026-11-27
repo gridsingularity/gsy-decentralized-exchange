@@ -1,27 +1,72 @@
 use crate::db::DbRef;
 use crate::routes::parse_time_range;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
-use anyhow::{Error, Result};
+use anyhow::{Context, Error, Result};
+use chrono::{DateTime, Utc};
+use mongodb::bson::doc;
+use mongodb::error::{ErrorKind, WriteFailure};
 use primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
 use primitives::ewds::dto::EwdsOrderDto;
-use primitives::utils::normalize_market_id;
+use primitives::utils::{
+    normalize_uuid, validate_offchain_actor_id,
+};
 use serde::Deserialize;
+use std::collections::HashSet;
+
+fn normalize_imported_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
+    order.order_id = normalize_uuid(&order.order_id).context("Invalid orderId")?;
+    order.market_id = normalize_uuid(&order.market_id)?;
+    order.created_by = validate_offchain_actor_id(&order.created_by).context("Invalid createdBy")?;
+    if let Some(partner) = order
+        .requirements
+        .as_mut()
+        .and_then(|requirements| requirements.trading_partner_id.as_mut())
+    {
+        *partner = validate_offchain_actor_id(partner).context("Invalid preferredTradingPartner")?;
+    }
+    Ok(order)
+}
 
 pub async fn post_orders(orders: Json<Vec<EwdsOrderDto>>, db: DbRef) -> impl Responder {
     let db_orders: Result<Vec<DbOrderSchema>, _> = orders
         .into_inner()
         .into_iter()
-        .map(DbOrderSchema::try_from)
+        .map(|order| DbOrderSchema::try_from(order).and_then(normalize_imported_order))
         .collect();
 
     let db_orders = match db_orders {
         Ok(o) => o,
-        Err(_) => return HttpResponse::BadRequest().finish(),
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
     };
 
-    match db.get_ref().orders().insert_orders(db_orders).await {
+    let mut ids = HashSet::new();
+    if db_orders
+        .iter()
+        .any(|order| !ids.insert(order.order_id.clone()))
+    {
+        return HttpResponse::Conflict().body("Duplicate orderId in import batch");
+    }
+    match db
+        .orders()
+        .count_documents(doc! {"order_id": {"$in": ids.into_iter().collect::<Vec<_>>()}})
+        .await
+    {
+        Ok(0) => {}
+        Ok(_) => return HttpResponse::Conflict().body("Order already exists"),
+        Err(error) => {
+            tracing::error!("Failed to check order import conflicts: {error}");
+            return HttpResponse::InternalServerError().finish();
+        }
+    }
+    match db.get_ref().orders().import_orders(db_orders).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
-        Err(_) => HttpResponse::InternalServerError().finish(),
+        Err(error) if matches!(error.kind.as_ref(), ErrorKind::Write(WriteFailure::WriteError(write)) if write.code == 11000) => {
+            HttpResponse::Conflict().body("Order already exists")
+        }
+        Err(error) => {
+            tracing::error!("Failed to import orders: {error}");
+            HttpResponse::InternalServerError().finish()
+        }
     }
 }
 
@@ -42,8 +87,8 @@ pub struct OrdersParameters {
 async fn filter_orders_from_db(
     db: DbRef,
     market_id: Option<String>,
-    start_time: Option<u64>,
-    end_time: Option<u64>,
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
 ) -> Result<Vec<EwdsOrderDto>, Error> {
     let orders = if market_id.is_none() && start_time.is_none() && end_time.is_none() {
         db.get_ref().orders().get_all_orders().await?
@@ -68,7 +113,7 @@ pub async fn get_orders(db: DbRef, orders_parameters: Query<OrdersParameters>) -
     let market_id = match orders_parameters
         .market_id
         .as_deref()
-        .map(normalize_market_id)
+        .map(normalize_uuid)
         .transpose()
     {
         Ok(id) => id,

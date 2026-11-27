@@ -1,20 +1,27 @@
+use chrono::{DateTime, Utc};
 use gsy_execution_engine::primitives::penalty_calculator::{
-    compute_delivery_verifications, compute_penalties,
+    compute_delivery_verifications, compute_final_delivery_verifications,
 };
+use gsy_execution_engine::primitives::penalty_policy::PenaltyPolicy;
 use primitives::db_api_schema::{
     orders::{DbOrderSchema, OrderEnum, OrderStatus},
     profiles::MeasurementSchema,
     trades::{DbTradeSchema, TradeParameters, TradeStatus},
 };
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::epoch_to_datetime;
 use std::collections::HashMap;
 
-fn onchain_id(id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(id))
+fn flat(rate: f64, tolerance: f64) -> PenaltyPolicy {
+    PenaltyPolicy::new(rate, rate, tolerance).unwrap()
+}
+
+/// The delivery slot every test trade belongs to.
+fn slot() -> DateTime<Utc> {
+    epoch_to_datetime(1_000).unwrap()
 }
 
 fn order(order_id: &str, owner_id: &str, is_bid: bool) -> DbOrderSchema {
-    let actor_id = bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id));
+    let actor_id = owner_id.to_owned();
     DbOrderSchema {
         order_id: order_id.to_string(),
         status: OrderStatus::Executed,
@@ -24,10 +31,9 @@ fn order(order_id: &str, owner_id: &str, is_bid: bool) -> DbOrderSchema {
         } else {
             OrderEnum::Offer
         },
-        area_uuid: actor_id.clone(),
         market_id: "market-1".to_string(),
-        time_slot: 1_000,
-        creation_time: 900,
+        time_slot: slot(),
+        creation_time: epoch_to_datetime(900).unwrap(),
         energy_kWh: 10.0,
         energy_rate: 1.0,
         created_by: actor_id,
@@ -45,7 +51,7 @@ fn trade() -> DbTradeSchema {
         seller: offer.created_by.clone(),
         buyer: bid.created_by.clone(),
         market_id: "market-1".to_string(),
-        creation_time: 950,
+        creation_time: epoch_to_datetime(950).unwrap(),
         offer_hash: "offer-1".to_string(),
         bid_hash: "bid-1".to_string(),
         residual_offer_id: None,
@@ -62,14 +68,14 @@ fn measurement(facility_id: &str, energy_kwh: f64) -> MeasurementSchema {
     MeasurementSchema {
         facility_id: facility_id.to_string(),
         community_uuid: "community1".to_string(),
-        time_slot: 1_000,
-        creation_time: 1_000,
+        time_slot: slot(),
+        creation_time: slot(),
         energy_kwh,
     }
 }
 
 #[test]
-fn compute_penalties_matches_facility_measurements_to_owner_ids() {
+fn verification_matches_facility_measurements_to_owner_ids() {
     let measurements = vec![
         measurement("areaalice", 12.0),
         measurement("areabob", -10.0),
@@ -81,22 +87,18 @@ fn compute_penalties_matches_facility_measurements_to_owner_ids() {
         ("areabob".to_string(), "bob".to_string()),
     ]);
 
-    let penalties = compute_penalties(
+    let verdicts = compute_delivery_verifications(
         &[trade()],
         &measurements,
         &facility_owner_mapping,
-        1_000,
-        0.10,
-        5.0,
+        slot(),
+        flat(0.10, 5.0),
     )
     .unwrap();
 
-    assert_eq!(penalties.len(), 1);
-    assert_eq!(penalties[0].penalty_cost, 2_000);
-    assert_eq!(
-        penalties[0].penalized_account,
-        bytes16_to_hex(create_encrypted_bytes16_from_string("alice"))
-    );
+    assert_eq!(verdicts.len(), 1);
+    assert_eq!(verdicts[0].buyer_penalty_cost, 2_000);
+    assert_eq!(verdicts[0].seller_penalty_cost, 0);
 }
 
 #[test]
@@ -108,30 +110,33 @@ fn verification_distinguishes_missing_measurements_from_zero_penalties() {
     let buyer = measurement("buyer-meter", 10.0);
     let seller = measurement("seller-meter", -10.0);
     assert!(
-        compute_delivery_verifications(&[trade()], &[], &mapping, 1_000, 0.1, 5.0)
+        compute_delivery_verifications(&[trade()], &[], &mapping, slot(), flat(0.1, 5.0))
             .unwrap()
             .is_empty()
     );
     for only_one in [buyer.clone(), seller.clone()] {
-        assert!(
-            compute_delivery_verifications(&[trade()], &[only_one], &mapping, 1_000, 0.1, 5.0)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(compute_delivery_verifications(
+            &[trade()],
+            &[only_one],
+            &mapping,
+            slot(),
+            flat(0.1, 5.0)
+        )
+        .unwrap()
+        .is_empty());
     }
     let measurements = [buyer, seller];
     assert!(compute_delivery_verifications(
         &[trade()],
         &measurements,
         &HashMap::new(),
-        1_000,
-        0.1,
-        5.0
+        slot(),
+        flat(0.1, 5.0)
     )
     .unwrap()
     .is_empty());
     let verdicts =
-        compute_delivery_verifications(&[trade()], &measurements, &mapping, 1_000, 0.1, 5.0)
+        compute_delivery_verifications(&[trade()], &measurements, &mapping, slot(), flat(0.1, 5.0))
             .unwrap();
     assert_eq!(verdicts.len(), 1);
     assert_eq!(verdicts[0].buyer_penalty_cost, 0);
@@ -162,7 +167,7 @@ fn verification_penalizes_each_partys_own_deviation_in_both_directions() {
         ];
         let trades = [trade()];
         let verdicts =
-            compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
+            compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(0.1, 5.0))
                 .unwrap();
         assert_eq!(verdicts.len(), 1);
         assert_eq!(
@@ -173,18 +178,47 @@ fn verification_penalizes_each_partys_own_deviation_in_both_directions() {
             (expected_buyer, expected_seller),
             "buyer={buyer}, seller={seller}"
         );
-        let penalties =
-            compute_penalties(&trades, &measurements, &mapping, 1_000, 0.1, 5.0).unwrap();
-        for (party, cost) in [("alice", expected_buyer), ("bob", expected_seller)] {
-            let penalty = penalties
-                .iter()
-                .find(|penalty| penalty.penalized_account == onchain_id(party));
-            assert_eq!(
-                penalty.map(|penalty| penalty.penalty_cost),
-                (cost > 0).then_some(cost)
-            );
-        }
     }
+}
+
+#[test]
+fn verification_joins_exact_facility_readings_to_keyed_owner_parties() {
+    let facility = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let owner = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    let mut matched = trade();
+    matched.buyer = owner.to_owned();
+    let mapping = HashMap::from([
+        (facility.to_uppercase(), owner.to_string()),
+        ("seller-meter".to_string(), "bob".to_string()),
+    ]);
+    let measurements = [
+        measurement(&facility.to_uppercase(), 12.0),
+        measurement("seller-meter", -10.0),
+    ];
+    let verdicts = compute_delivery_verifications(
+        &[matched.clone()],
+        &measurements,
+        &mapping,
+        slot(),
+        flat(0.1, 5.0),
+    )
+    .unwrap();
+    assert_eq!(verdicts.len(), 1);
+    assert_eq!(verdicts[0].buyer_penalty_cost, 2_000);
+    assert_eq!(verdicts[0].seller_penalty_cost, 0);
+    // A differently spelled actor is not the registered facility.
+    assert!(compute_delivery_verifications(
+        &[matched],
+        &[
+            measurement(facility, 12.0),
+            measurement("seller-meter", -10.0)
+        ],
+        &mapping,
+        slot(),
+        flat(0.1, 5.0),
+    )
+    .unwrap()
+    .is_empty());
 }
 
 #[test]
@@ -208,9 +242,8 @@ fn verification_ignores_unrelated_or_invalid_measurements() {
             &[trade()],
             &measurements,
             &mapping,
-            1_000,
-            0.1,
-            5.0
+            slot(),
+            flat(0.1, 5.0)
         )
         .unwrap()
         .is_empty());
@@ -225,9 +258,8 @@ fn verification_ignores_unrelated_or_invalid_measurements() {
                 &[trade()],
                 &measurements,
                 &mapping,
-                1_000,
-                0.1,
-                5.0
+                slot(),
+                flat(0.1, 5.0)
             )
             .unwrap()
             .is_empty());
@@ -238,15 +270,15 @@ fn verification_ignores_unrelated_or_invalid_measurements() {
 #[test]
 fn verification_keeps_distinct_owners_measurements_separate() {
     // Each facility maps to one distinct owner in this deployment.
-    let first_id = onchain_id("owner-1");
-    let second_id = onchain_id("owner-2");
+    let first_id = "owner-1".to_owned();
+    let second_id = "owner-2".to_owned();
     let mapping = HashMap::from([
         ("first-meter".into(), "owner-1".into()),
         ("second-meter".into(), "owner-2".into()),
         ("seller-meter".into(), "bob".to_string()),
     ]);
     let mut first = trade();
-    first.buyer = first_id.clone();
+    first.buyer = first_id;
     let mut second = first.clone();
     second.trade_uuid = "trade-2".into();
     second.buyer = second_id;
@@ -256,19 +288,19 @@ fn verification_keeps_distinct_owners_measurements_separate() {
         measurement("seller-meter", -20.0),
     ];
     let verifications =
-        compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0).unwrap();
+        compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(0.1, 5.0))
+            .unwrap();
     assert_eq!(verifications.len(), 1);
     assert_eq!(verifications[0].trade_uuid, "trade-1");
-    let penalties = compute_penalties(&trades, &measurements, &mapping, 1_000, 0.1, 5.0).unwrap();
-    assert_eq!(penalties.len(), 1);
-    assert_eq!(penalties[0].penalized_account, first_id);
+    assert_eq!(verifications[0].buyer_penalty_cost, 2_000);
+    assert_eq!(verifications[0].seller_penalty_cost, 0);
 }
 
 fn matched(id: &str, buyer: &str, seller: &str, energy: f64) -> DbTradeSchema {
     let mut trade = trade();
     trade.trade_uuid = id.into();
-    trade.buyer = onchain_id(buyer);
-    trade.seller = onchain_id(seller);
+    trade.buyer = buyer.to_owned();
+    trade.seller = seller.to_owned();
     trade.parameters.selected_energy_kWh = energy;
     trade
 }
@@ -284,6 +316,40 @@ fn readings(values: &[(&str, f64)]) -> (Vec<MeasurementSchema>, HashMap<String, 
             .map(|(id, _)| ((*id).into(), (*id).into()))
             .collect(),
     )
+}
+
+#[test]
+fn variable_rate_is_set_before_splitting_and_is_unchanged_by_a_missing_counterparty() {
+    let policy = PenaltyPolicy::new(0.10, 0.20, 5.0).unwrap();
+    let split = [
+        matched("a", "alice", "bob", 4.0),
+        matched("b", "alice", "charlie", 6.0),
+    ];
+    let (all, mapping) = readings(&[("alice", 12.0), ("bob", -4.0), ("charlie", -6.0)]);
+    let (single, _) = readings(&[("alice", 12.0), ("bob", -10.0)]);
+    let unsplit =
+        compute_delivery_verifications(&[trade()], &single, &mapping, slot(), policy).unwrap();
+    let both = compute_delivery_verifications(&split, &all, &mapping, slot(), policy).unwrap();
+    assert_eq!(unsplit[0].buyer_penalty_cost, 2_316);
+    assert_eq!(
+        (both[0].buyer_penalty_cost, both[1].buyer_penalty_cost),
+        (926, 1_390)
+    );
+    assert_eq!(
+        both.iter().map(|v| v.buyer_penalty_cost).sum::<u64>(),
+        unsplit[0].buyer_penalty_cost
+    );
+    let partial =
+        compute_delivery_verifications(&split, &all[..2], &mapping, slot(), policy).unwrap();
+    assert_eq!(partial, both[..1]);
+    let final_verdicts =
+        compute_final_delivery_verifications(&split, &all[..2], &mapping, slot(), policy).unwrap();
+    assert_eq!(final_verdicts[0], both[0]);
+    assert_eq!(
+        final_verdicts[1].buyer_penalty_cost,
+        both[1].buyer_penalty_cost
+    );
+    assert_eq!(final_verdicts[1].seller_penalty_cost, 12_000); // 6 kWh at the maximum rate.
 }
 
 #[test]
@@ -315,9 +381,14 @@ fn split_trades_use_the_facility_total_and_allocate_by_quantity() {
                 ("bob", -sign * 4.0),
                 ("charlie", -sign * 6.0),
             ]);
-            let verdicts =
-                compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
-                    .unwrap();
+            let verdicts = compute_delivery_verifications(
+                &trades,
+                &measurements,
+                &mapping,
+                slot(),
+                flat(0.1, 5.0),
+            )
+            .unwrap();
             assert_eq!(verdicts.len(), 2);
             let costs = verdicts
                 .iter()
@@ -361,7 +432,7 @@ fn mixed_roles_use_net_energy_and_allocate_over_purchases_and_sales() {
         let (measurements, mapping) =
             readings(&[("alice", measured), ("bob", -bought), ("charlie", sold)]);
         let verdicts =
-            compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
+            compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(0.1, 5.0))
                 .unwrap();
         assert_eq!(verdicts.len(), 2);
         assert_eq!(
@@ -396,14 +467,14 @@ fn completed_and_unmeasured_trades_remain_in_the_allocation_baseline() {
             readings(&[("alice", measured), ("bob", -4.0), ("charlie", -6.0)]);
         let late = measurements.pop().unwrap();
         let initial =
-            compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
+            compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(0.1, 5.0))
                 .unwrap();
         assert_eq!(initial.len(), 1);
         assert_eq!(initial[0].buyer_penalty_cost, first_cost);
         measurements.push(late);
         trades[0].status = status.clone();
         let verdicts =
-            compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
+            compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(0.1, 5.0))
                 .unwrap();
         assert_eq!(
             verdicts.len(),
@@ -434,7 +505,7 @@ fn allocation_preserves_rounding_units_and_is_independent_of_query_order() {
     let (mut measurements, mapping) = readings(&[("alice", 3.0001), ("bob", -3.0)]);
     for _ in 0..2 {
         let verdicts =
-            compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 1.0, 0.0)
+            compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(1.0, 0.0))
                 .unwrap();
         assert_eq!(
             verdicts.iter().map(|v| v.buyer_penalty_cost).sum::<u64>(),
@@ -456,7 +527,8 @@ fn allocation_preserves_rounding_units_and_is_independent_of_query_order() {
         matched("b", "alice", "bob", 2.0),
     ];
     let verdicts =
-        compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 1.0, 0.0).unwrap();
+        compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(1.0, 0.0))
+            .unwrap();
     assert_eq!(
         (
             verdicts[0].buyer_penalty_cost,
@@ -471,17 +543,21 @@ fn measurements_from_other_slots_cannot_verify_or_change_this_slot() {
     let trades = [trade()];
     let (mut measurements, mapping) = readings(&[("alice", 10.0), ("bob", -10.0)]);
     for reading in &mut measurements {
-        reading.time_slot = 1_900;
+        reading.time_slot = epoch_to_datetime(1_900).unwrap();
     }
-    assert!(
-        compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(compute_delivery_verifications(
+        &trades,
+        &measurements,
+        &mapping,
+        slot(),
+        flat(0.1, 5.0)
+    )
+    .unwrap()
+    .is_empty());
     measurements.extend([measurement("alice", 12.0), measurement("bob", -10.0)]);
     for _ in 0..2 {
         let verdicts =
-            compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
+            compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(0.1, 5.0))
                 .unwrap();
         assert_eq!(verdicts.len(), 1);
         assert_eq!(verdicts[0].buyer_penalty_cost, 2000);
@@ -490,23 +566,67 @@ fn measurements_from_other_slots_cannot_verify_or_change_this_slot() {
 }
 
 #[test]
+fn subsecond_offset_is_not_a_reading_for_the_delivery_slot() {
+    let policy = PenaltyPolicy::new(0.10, 0.20, 5.0).unwrap();
+    let trades = [trade()];
+    let (mut readings, mapping) = readings(&[("alice", 12.0), ("bob", -10.0)]);
+    readings[0].time_slot += chrono::TimeDelta::milliseconds(1);
+
+    assert!(compute_delivery_verifications(&trades, &readings, &mapping, slot(), policy)
+        .unwrap()
+        .is_empty());
+    let verdicts =
+        compute_final_delivery_verifications(&trades, &readings, &mapping, slot(), policy).unwrap();
+    assert_eq!(verdicts.len(), 1);
+    assert_eq!(verdicts[0].buyer_penalty_cost, 20_000); // Missing 10 kWh at the maximum rate.
+    assert_eq!(verdicts[0].seller_penalty_cost, 0);
+}
+
+#[test]
+fn duplicate_readings_are_compared_at_meter_precision_before_and_after_grace() {
+    let (mut measurements, mapping) = readings(&[
+        ("alice", 10.0),
+        ("alice", 10.00001),
+        ("bob", -10.0),
+        ("bob", -10.00001),
+    ]);
+    for calculate in [
+        compute_delivery_verifications,
+        compute_final_delivery_verifications,
+    ] {
+        for _ in 0..2 {
+            let verdicts =
+                calculate(&[trade()], &measurements, &mapping, slot(), flat(0.1, 5.0)).unwrap();
+            assert_eq!(verdicts.len(), 1);
+            assert_eq!(
+                (
+                    verdicts[0].buyer_penalty_cost,
+                    verdicts[0].seller_penalty_cost
+                ),
+                (0, 0)
+            );
+            measurements.reverse();
+        }
+    }
+}
+
+#[test]
 fn duplicate_readings_cannot_double_charge_or_choose_a_conflicting_value() {
     let (mut measurements, mapping) = readings(&[("alice", 12.0), ("bob", -10.0)]);
     measurements.push(measurements[0].clone());
     let verdicts =
-        compute_delivery_verifications(&[trade()], &measurements, &mapping, 1_000, 0.1, 5.0)
+        compute_delivery_verifications(&[trade()], &measurements, &mapping, slot(), flat(0.1, 5.0))
             .unwrap();
     assert_eq!(verdicts[0].buyer_penalty_cost, 2000);
-    for invalid in [11.0, f64::NAN] {
+    for invalid in [12.0001, 11.0, f64::NAN] {
         measurements.push(measurement("alice", invalid));
         for _ in 0..2 {
             assert!(compute_delivery_verifications(
                 &[trade()],
                 &measurements,
                 &mapping,
-                1_000,
-                0.1,
-                5.0
+                slot(),
+                flat(0.1, 5.0)
             )
             .unwrap()
             .is_empty());
@@ -525,9 +645,8 @@ fn invalid_trade_quantities_and_duplicates_fail_instead_of_shrinking_the_baselin
             &[trade(), invalid],
             &measurements,
             &mapping,
-            1_000,
-            0.1,
-            5.0
+            slot(),
+            flat(0.1, 5.0)
         )
         .is_err());
     }
@@ -535,9 +654,8 @@ fn invalid_trade_quantities_and_duplicates_fail_instead_of_shrinking_the_baselin
         &[trade(), trade()],
         &measurements,
         &mapping,
-        1_000,
-        0.1,
-        5.0
+        slot(),
+        flat(0.1, 5.0)
     )
     .is_err());
 }
@@ -571,6 +689,14 @@ fn tolerance_is_inclusive_and_penalties_use_the_full_deviation() {
         (100.0, 102.6, 2.5, 2_600),
         (100.0, 200.0, 100.0, 0),
         (100.0, 201.0, 100.0, 101_000),
+        (2.0, 2.1, 5.0, 0),
+        (2.0, 1.9, 5.0, 0),
+        (1.9, 1.995, 5.0, 0),
+        (1.9, 1.805, 5.0, 0),
+        (5.1, 5.355, 5.0, 0),
+        (6.1, 6.405, 5.0, 0),
+        (1.9, 1.9951, 5.0, 95),
+        (1.9, 1.8049, 5.0, 95),
     ] {
         let mut trade = trade();
         trade.parameters.selected_energy_kWh = traded;
@@ -584,9 +710,8 @@ fn tolerance_is_inclusive_and_penalties_use_the_full_deviation() {
                 &trades,
                 &measurements,
                 &mapping,
-                1_000,
-                0.1,
-                tolerance,
+                slot(),
+                flat(0.1, tolerance),
             )
             .unwrap();
             assert_eq!(
@@ -599,16 +724,95 @@ fn tolerance_is_inclusive_and_penalties_use_the_full_deviation() {
                 expected_cost,
                 "traded={traded}, measured={measured}, tolerance={tolerance}"
             );
-            let penalties =
-                compute_penalties(&trades, &measurements, &mapping, 1_000, 0.1, tolerance).unwrap();
-            assert_eq!(penalties.len(), usize::from(expected_cost > 0));
-            assert_eq!(
-                penalties
-                    .iter()
-                    .map(|penalty| penalty.penalty_cost)
-                    .sum::<u64>(),
-                expected_cost
-            );
         }
     }
+}
+
+#[test]
+fn after_the_grace_period_a_missing_reading_is_penalized_on_the_whole_net_position() {
+    let mapping = HashMap::from([
+        ("buyer-meter".to_string(), "alice".to_string()),
+        ("seller-meter".to_string(), "bob".to_string()),
+    ]);
+    let buyer = measurement("buyer-meter", 10.0);
+    let seller = measurement("seller-meter", -10.0);
+    let verdict = |measurements: &[MeasurementSchema]| {
+        let verdicts = compute_final_delivery_verifications(
+            &[trade()],
+            measurements,
+            &mapping,
+            slot(),
+            flat(0.1, 5.0),
+        )
+        .unwrap();
+        assert_eq!(verdicts.len(), 1);
+        (
+            verdicts[0].buyer_penalty_cost,
+            verdicts[0].seller_penalty_cost,
+        )
+    };
+    // 10 kWh traded, nothing delivered: 10 * 0.1 * 10,000 on-chain units.
+    assert_eq!(verdict(&[]), (10_000, 10_000));
+    assert_eq!(verdict(std::slice::from_ref(&buyer)), (0, 10_000));
+    assert_eq!(verdict(std::slice::from_ref(&seller)), (10_000, 0));
+    assert_eq!(verdict(&[buyer.clone(), seller.clone()]), (0, 0));
+    // Conflicting and non-finite readings are not usable either.
+    let conflicting = measurement("seller-meter", -9.0);
+    assert_eq!(verdict(&[buyer.clone(), seller, conflicting]), (0, 10_000));
+    assert_eq!(
+        verdict(&[buyer, measurement("seller-meter", f64::NAN)]),
+        (0, 10_000)
+    );
+}
+
+#[test]
+fn after_the_grace_period_the_counterparty_is_charged_its_full_penalty() {
+    // P1 sells 3 to C1 and 1 to C3; P2 sells 2 to C2. C3 has no reading.
+    let trades = vec![
+        matched("t1", "c1", "p1", 3.0),
+        matched("t2", "c2", "p2", 2.0),
+        matched("t3", "c3", "p1", 1.0),
+    ];
+    let (measurements, mut mapping) =
+        readings(&[("c1", 3.6), ("c2", 2.1), ("p2", -1.5), ("p1", -4.5)]);
+    mapping.insert("c3".into(), "c3".into());
+    let costs = |verdicts: Vec<_>| {
+        let mut costs = verdicts
+            .into_iter()
+            .map(
+                |v: gsy_execution_engine::primitives::penalty_calculator::DeliveryVerification| {
+                    (v.trade_uuid, v.buyer_penalty_cost, v.seller_penalty_cost)
+                },
+            )
+            .collect::<Vec<_>>();
+        costs.sort();
+        costs
+    };
+
+    // Inside the grace period T3 waits for C3, so P1 is charged 375 of its 500.
+    assert_eq!(
+        costs(
+            compute_delivery_verifications(&trades, &measurements, &mapping, slot(), flat(0.1, 5.0))
+                .unwrap()
+        ),
+        [("t1".to_string(), 600, 375), ("t2".to_string(), 0, 500)]
+    );
+    // Afterwards T3 completes: C3 pays for its whole 1 kWh and P1 its remaining 125.
+    assert_eq!(
+        costs(
+            compute_final_delivery_verifications(
+                &trades,
+                &measurements,
+                &mapping,
+                slot(),
+                flat(0.1, 5.0)
+            )
+            .unwrap()
+        ),
+        [
+            ("t1".to_string(), 600, 375),
+            ("t2".to_string(), 0, 500),
+            ("t3".to_string(), 1_000, 125)
+        ]
+    );
 }

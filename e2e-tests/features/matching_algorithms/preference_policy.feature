@@ -1,4 +1,4 @@
-Feature: Preference settlement policy
+Feature: Preference matching policy
 
   Scenario Outline: Preference policy - <case>
     Given the GSY DEX services are running
@@ -6,7 +6,7 @@ Feature: Preference settlement policy
     When the Market Orchestrator opens the Spot market for the current delivery slot
     And forecasts of 10 energy are submitted
     When a bid at <bid> preferring "<buyer_partner>" at <buyer_preferred> and an offer at <offer> preferring "<seller_partner>" at <seller_preferred> are submitted
-    Then the pair settles as "<type>" at <pay_as_bid> for pay-as-bid or max_offer <max_offer>, min_bid <min_bid>, midpoint <midpoint> for pay-as-clear
+    Then the pair is matched as "<type>" at <pay_as_bid> for pay-as-bid or max_offer <max_offer>, min_bid <min_bid>, midpoint <midpoint> for pay-as-clear
 
     Examples:
       | case                         | bid | offer | buyer_partner | buyer_preferred | seller_partner | seller_preferred | type      | pay_as_bid | max_offer | min_bid | midpoint |

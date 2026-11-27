@@ -1,15 +1,17 @@
 #[path = "common/facilities.rs"]
 mod facilities;
 
-use facilities::{OWNER_1_ONCHAIN, OWNER_2_ONCHAIN};
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::dto::EwdsSendMessageDto;
-use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    derive_onchain_id, epoch_to_datetime, hex_to_bytes16, uuid_v4_to_bytes16,
+    NODE_FLOAT_SCALING_FACTOR,
+};
 use primitives::{MarketType, MatchingAlgorithm};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use wiremock::matchers::{method, path};
@@ -21,15 +23,15 @@ async fn setup_facilities_mock() -> MockServer {
 
 fn test_market() -> MarketSchema {
     MarketSchema {
-        market_id: format!("0x{}", "11".repeat(16)),
+        market_id: "11111111-1111-4111-8111-111111111111".to_string(),
         community_id: "community-1".to_string(),
-        opening_time: "00000000000000456446".to_string(),
-        closing_time: "00000000000000456447".to_string(),
-        delivery_start_time: "00000000000000456456".to_string(),
-        delivery_end_time: "00000000000000456457".to_string(),
+        opening_time: epoch_to_datetime(456_446).unwrap(),
+        closing_time: epoch_to_datetime(456_447).unwrap(),
+        delivery_start_time: epoch_to_datetime(456_456).unwrap(),
+        delivery_end_time: epoch_to_datetime(456_457).unwrap(),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: "00000000000000345345".to_string(),
+        created_at: epoch_to_datetime(345_345).unwrap(),
     }
 }
 
@@ -41,16 +43,16 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     let forecasts: Vec<ForecastSchema> = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
-            creation_time: 123_123,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(123_123).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: 12.0,
             community_uuid: "community1".to_string(),
             confidence: 0.8,
         },
         ForecastSchema {
             facility_id: "area2".to_string(),
-            creation_time: 234_234,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(234_234).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: -1.0,
             community_uuid: "community1".to_string(),
             confidence: 0.1,
@@ -81,11 +83,11 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[0];
     assert_eq!(
         bid_created_by,
-        parse_uuid_or_hex_bytes16(OWNER_1_ONCHAIN).unwrap()
+        hex_to_bytes16(&derive_onchain_id("owner-1")).unwrap()
     );
     assert_eq!(
         bid_market,
-        parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse market id")
+        uuid_v4_to_bytes16(market.market_id.as_str()).expect("failed to parse market id")
     );
     // delivery_start_time from market drives the slot now, not forecast.time_slot
     assert_eq!(bid_slot, 456_456);
@@ -112,11 +114,11 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[1];
     assert_eq!(
         offer_created_by,
-        parse_uuid_or_hex_bytes16(OWNER_2_ONCHAIN).unwrap()
+        hex_to_bytes16(&derive_onchain_id("owner-2")).unwrap()
     );
     assert_eq!(
         offer_market,
-        parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse market id")
+        uuid_v4_to_bytes16(market.market_id.as_str()).expect("failed to parse market id")
     );
     assert_eq!(offer_slot, 456_456);
     assert!(current_time >= offer_creation && current_time - offer_creation <= 1);
@@ -136,16 +138,16 @@ async fn test_create_input_orders_skips_if_facility_does_not_exist() {
     let forecasts = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
-            creation_time: 1,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(1).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: 5.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
         },
         ForecastSchema {
             facility_id: "missing-facility".to_string(),
-            creation_time: 1,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(1).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: 7.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
@@ -167,16 +169,16 @@ async fn test_create_input_orders_skips_zero_energy_forecasts() {
     let forecasts = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
-            creation_time: 1,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(1).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: 0.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
         },
         ForecastSchema {
             facility_id: "area2".to_string(),
-            creation_time: 1,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(1).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: -2.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
@@ -199,24 +201,24 @@ async fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mappi
     let forecasts = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
-            creation_time: 1,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(1).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: 2.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
         },
         ForecastSchema {
             facility_id: "area2".to_string(),
-            creation_time: 1,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(1).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: -3.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
         },
         ForecastSchema {
             facility_id: "area1".to_string(),
-            creation_time: 1,
-            time_slot: 456_456,
+            creation_time: epoch_to_datetime(1).unwrap(),
+            time_slot: epoch_to_datetime(456_456).unwrap(),
             energy_kwh: 4.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
@@ -234,13 +236,22 @@ async fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mappi
 
     let order_ids: HashSet<[u8; 16]> = orders.iter().map(|order| order.0).collect();
     assert_eq!(order_ids.len(), orders.len());
+    for id in order_ids {
+        let uuid = uuid::Uuid::from_bytes(id);
+        assert_eq!(uuid.get_version(), Some(uuid::Version::Random));
+        assert_eq!(uuid.get_variant(), uuid::Variant::RFC4122);
+        assert_eq!(
+            primitives::utils::uuid_v4_to_bytes16(&uuid.to_string()).unwrap(),
+            id
+        );
+    }
 }
 
 fn forecast(facility_id: &str, energy_kwh: f64) -> ForecastSchema {
     ForecastSchema {
         facility_id: facility_id.to_string(),
-        creation_time: 1,
-        time_slot: 456_456,
+        creation_time: epoch_to_datetime(1).unwrap(),
+        time_slot: epoch_to_datetime(456_456).unwrap(),
         energy_kwh,
         community_uuid: "community-1".to_string(),
         confidence: 0.9,
@@ -249,13 +260,35 @@ fn forecast(facility_id: &str, energy_kwh: f64) -> ForecastSchema {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn uuid_forecasts_resolve_the_owner_for_the_registered_spelling() {
+    let facility = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let _server = facilities::setup_facilities_mock([&facility.to_uppercase(), "area2"]).await;
+    let orders = create_input_orders(
+        vec![forecast(&facility.to_uppercase(), 1.0), forecast(&facility.to_uppercase(), 2.0)],
+        test_market(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(orders.len(), 2);
+    for order in orders {
+        assert_eq!(
+            order.1,
+            hex_to_bytes16(&derive_onchain_id("owner-1")).unwrap()
+        );
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn empty_or_zero_forecasts_do_not_query_storage() {
     let server = setup_facilities_mock().await;
     for forecasts in [vec![], vec![forecast("area1", 0.0)]] {
-        assert!(create_input_orders(forecasts, test_market())
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            create_input_orders(forecasts, test_market())
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
     assert!(server.received_requests().await.unwrap().is_empty());
 }
@@ -292,9 +325,11 @@ async fn ineligible_forecasts_do_not_resolve_ids_or_contact_ewds_in_http_mode() 
     }
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 12);
-    assert!(requests
-        .iter()
-        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate")));
+    assert!(
+        requests
+            .iter()
+            .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate"))
+    );
 }
 
 #[tokio::test]
@@ -323,23 +358,27 @@ async fn validation_errors_fail_before_id_resolution_and_can_be_retried() {
         let error = create_input_orders(vec![forecast("area1", 5.0)], test_market())
             .await
             .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("Facility participation validation failed"));
+        assert!(
+            error
+                .to_string()
+                .contains("Facility participation validation failed")
+        );
     }
-    assert!(server
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate")));
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate"))
+    );
     let orders = create_input_orders(vec![forecast("area1", 5.0)], test_market())
         .await
         .unwrap();
     assert_eq!(orders.len(), 1);
     assert_eq!(
         orders[0].1,
-        parse_uuid_or_hex_bytes16(OWNER_1_ONCHAIN).unwrap()
+        hex_to_bytes16(&derive_onchain_id("owner-1")).unwrap()
     );
     std::env::set_var("EWDS_ENABLE_HANDLER", "false");
     match previous_gateway {
@@ -379,10 +418,6 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
                             {"facility_id": "area2", "market_id": test_market().market_id, "eligible": true},
                         ])
                     }
-                    "ids.query" => {
-                        assert_eq!(payload["payload"]["offchain_id"], "owner-2");
-                        json!([{"offchain_id": "owner-2", "onchain_id": OWNER_2_ONCHAIN, "creation_time": 0}])
-                    }
                     other => panic!("unexpected query {other}"),
                 };
                 *response.lock().unwrap() = json!({"requestId": payload["requestId"], "success": true, "data": data});
@@ -421,12 +456,14 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
     assert_eq!(orders.len(), 1);
     assert_eq!(
         orders[0].1,
-        parse_uuid_or_hex_bytes16(OWNER_2_ONCHAIN).unwrap()
+        hex_to_bytes16(&derive_onchain_id("owner-2")).unwrap()
     );
     let requests = gateway.received_requests().await.unwrap();
-    assert!(requests
-        .iter()
-        .all(|request| request.url.path() == "/api/v2/messages"));
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.url.path() == "/api/v2/messages")
+    );
     let notifications: Vec<Value> = requests
         .iter()
         .filter(|request| request.method == "POST")
@@ -443,7 +480,12 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
     assert_eq!(order["orderType"], "offer");
     assert_eq!(order["quantity"], 2.0);
     assert_eq!(order["priceLimit"], 0.14);
-    assert!(order["rejectReason"].as_str().unwrap().contains("site_not_in_community"));
+    assert!(
+        order["rejectReason"]
+            .as_str()
+            .unwrap()
+            .contains("site_not_in_community")
+    );
     assert!(order["updatedAt"].is_string());
     uuid::Uuid::parse_str(order["orderId"].as_str().unwrap()).unwrap();
 }

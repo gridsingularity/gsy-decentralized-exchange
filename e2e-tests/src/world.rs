@@ -1,3 +1,4 @@
+use primitives::ewds::dto::EwdsSiteDto;
 use anyhow::{anyhow, Result};
 use cucumber::World;
 use ethers::prelude::*;
@@ -7,13 +8,12 @@ use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use primitives::db_api_schema::trades::DbTradeSchema;
-use primitives::ewds::dto::EwdsSiteDto;
-use primitives::offchain_storage::OffchainStorageClient;
-use primitives::utils::parse_uuid_or_hex_bytes16;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+
+pub(crate) const PRIMARY_SITE_ID: &str = "site-12345";
 
 const DEFAULT_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -79,7 +79,7 @@ pub struct MyWorld {
     pub secondary_community_id: String,
     pub market_controller_address: Address,
     pub order_registry_address: Address,
-    pub trade_settlement_address: Address,
+    pub trade_matching_address: Address,
     pub actor_registry_address: Address,
     pub last_market_id: Option<[u8; 16]>,
     pub target_delivery_time: u64,
@@ -138,7 +138,7 @@ impl MyWorld {
 
         let market_controller_address = Self::read_address_env("MARKET_CONTROLLER_ADDRESS")?;
         let order_registry_address = Self::read_address_env("ORDER_REGISTRY_ADDRESS")?;
-        let trade_settlement_address = Self::read_address_env("TRADE_SETTLEMENT_ADDRESS")?;
+        let trade_matching_address = Self::read_address_env("TRADE_MATCHING_ADDRESS")?;
         let actor_registry_address = Self::read_address_env("ACTOR_REGISTRY_ADDRESS")?;
 
         Ok(Self {
@@ -153,7 +153,7 @@ impl MyWorld {
             secondary_community_id: "22222222-2222-4222-8222-222222222222".to_string(),
             market_controller_address,
             order_registry_address,
-            trade_settlement_address,
+            trade_matching_address,
             actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
@@ -207,19 +207,12 @@ impl MyWorld {
             .with_chain_id(self.chain_id)
     }
 
-    pub async fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
-        if !self.users.contains_key(user_name) {
-            panic!("Unknown user '{}'", user_name);
-        }
-        let onchain_id = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
-            .fetch_onchain_id(user_name)
-            .await
-            .expect("failed to fetch onchain id");
-        parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")
-    }
-
     pub fn facility_id_for_user(&self, user_name: &str) -> String {
-        format!("area{user_name}")
+        self.facilities_topology
+            .iter()
+            .find(|facility| facility.owner_id == user_name && facility.site_id == PRIMARY_SITE_ID)
+            .map(|facility| facility.facility_id.clone())
+            .unwrap_or_else(|| format!("area{user_name}"))
     }
 
     pub fn facility_id_for_market_user(&self, market_id: [u8; 16], user_name: &str) -> String {

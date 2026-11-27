@@ -1,5 +1,5 @@
 use ethers::prelude::*;
-use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
+use ethers_solc::{Project, ProjectPathsConfig, artifacts::Severity};
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 

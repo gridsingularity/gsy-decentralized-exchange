@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use chrono::{DateTime, TimeDelta, Utc};
 use gsy_offchain_storage::certificates::builder::{
     build_local_origin_records, build_local_origin_records_with_allocation,
     delivery_verification_reference, interval_bounds_utc, round_half_up_2dp, sort_records,
@@ -19,12 +20,13 @@ use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_string_with_padding,
-    EPOCH_RFC3339,
-};
+use primitives::utils::epoch_to_datetime;
 
 const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z, on a 900s boundary
+
+fn ts(epoch_secs: u64) -> DateTime<Utc> {
+    epoch_to_datetime(epoch_secs).unwrap()
+}
 
 const COMMUNITY: &str = "community-1";
 const OTHER_COMMUNITY: &str = "community-2";
@@ -40,10 +42,6 @@ const REMOTE_OWNER: &str = "owner-remote";
 const EXPORT_POINT: &str = "Measurement:community-1:fac-seller:export";
 const IMPORT_POINT: &str = "Measurement:community-1:fac-seller:import";
 
-fn hash(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
-}
-
 fn facility(
     facility_id: &str,
     facility_name: &str,
@@ -55,7 +53,7 @@ fn facility(
         facility_name: facility_name.to_string(),
         site_id: site_id.to_string(),
         owner_id: owner_id.to_string(),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -65,7 +63,7 @@ fn community(community_id: &str, sites: &[&str]) -> EnergyCommunitySchema {
         community_id: community_id.to_string(),
         community_name: format!("{community_id}-name"),
         sites: sites.iter().map(|site| site.to_string()).collect(),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -116,7 +114,7 @@ fn point(
 fn value(measurement_point: &str, time_slot: u64, value: f64) -> TimeseriesSchema {
     TimeseriesSchema {
         measurement_point: measurement_point.to_string(),
-        timestamp: timestamp_to_string_with_padding(time_slot),
+        timestamp: ts(time_slot),
         value,
     }
 }
@@ -208,13 +206,13 @@ fn market(time_slot: u64) -> MarketSchema {
     MarketSchema {
         market_id: market_id(time_slot),
         community_id: COMMUNITY.to_string(),
-        opening_time: timestamp_to_string_with_padding(time_slot.saturating_sub(900)),
-        closing_time: timestamp_to_string_with_padding(time_slot),
-        delivery_start_time: timestamp_to_string_with_padding(time_slot),
-        delivery_end_time: timestamp_to_string_with_padding(time_slot.saturating_add(900)),
+        opening_time: ts(time_slot.saturating_sub(900)),
+        closing_time: ts(time_slot),
+        delivery_start_time: ts(time_slot),
+        delivery_end_time: ts(time_slot.saturating_add(900)),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: timestamp_to_string_with_padding(time_slot.saturating_sub(900)),
+        created_at: ts(time_slot.saturating_sub(900)),
     }
 }
 
@@ -239,10 +237,10 @@ fn trade(
     DbTradeSchema {
         trade_uuid: trade_uuid.to_string(),
         status,
-        seller: hash(seller_owner),
+        seller: seller_owner.to_owned(),
         buyer: buyer.to_string(),
         market_id: market_id(time_slot),
-        creation_time,
+        creation_time: ts(creation_time),
         offer_hash: format!("{trade_uuid}-offer"),
         bid_hash: format!("{trade_uuid}-bid"),
         residual_offer_id: None,
@@ -251,7 +249,7 @@ fn trade(
             selected_energy_kWh: energy_kwh,
             energy_rate: 0.2,
         },
-        status_updated_at: Some(SLOT + 1800),
+        status_updated_at: Some(ts(SLOT + 1800)),
     }
 }
 
@@ -260,7 +258,7 @@ fn sale(trade_uuid: &str, energy_kwh: f64, creation_time: u64) -> DbTradeSchema 
     trade(
         trade_uuid,
         SELLER_OWNER,
-        &hash(BUYER_OWNER),
+        &BUYER_OWNER.to_owned(),
         SLOT,
         energy_kwh,
         TradeStatus::Executed,
@@ -283,14 +281,14 @@ fn keys_of(value: &serde_json::Value) -> HashSet<String> {
 fn owner_party_resolves_the_facility_without_id_mapping_records() {
     let fixture = Fixture::exporting(4.0, 0.0);
     let mut trade = sale("trade-1", 3.0, 100);
-    trade.seller = hash(SELLER_OWNER);
+    trade.seller = SELLER_OWNER.to_owned();
     let records = fixture.build(vec![trade.clone()]);
     assert_eq!(records.len(), 1);
     assert_eq!(
         records[0].beneficiary_and_claim.owner_id,
-        hash(SELLER_OWNER)
+        SELLER_OWNER.to_owned()
     );
-    trade.seller = hash(SELLER_FACILITY);
+    trade.seller = SELLER_FACILITY.to_owned();
     assert!(fixture.build(vec![trade]).is_empty());
 }
 
@@ -299,7 +297,7 @@ fn another_owners_facility_does_not_supply_export_or_assets() {
     let fixture = Fixture::exporting(4.0, 0.0);
     assert_eq!(fixture.build(vec![sale("trade-1", 3.0, 100)]).len(), 1);
     let mut other_sale = sale("trade-2", 3.0, 101);
-    other_sale.seller = hash(REMOTE_OWNER);
+    other_sale.seller = REMOTE_OWNER.to_owned();
     assert!(fixture.build(vec![other_sale]).is_empty());
 }
 
@@ -387,7 +385,7 @@ fn one_covered_sale_yields_one_record_with_the_full_key_set_and_mapping() {
     assert!(!record.attribute_provenance.storage_mediated_flag);
 
     let claim = &record.beneficiary_and_claim;
-    assert_eq!(claim.owner_id, hash(SELLER_OWNER));
+    assert_eq!(claim.owner_id, SELLER_OWNER.to_owned());
     assert_eq!(
         claim.consumption_metering_point_id.as_deref(),
         Some(BUYER_FACILITY)
@@ -418,7 +416,7 @@ fn only_executed_trades_yield_records() {
         let t = trade(
             "trade-1",
             SELLER_OWNER,
-            &hash(BUYER_OWNER),
+            &BUYER_OWNER.to_owned(),
             SLOT,
             3.0,
             status.clone(),
@@ -437,7 +435,7 @@ fn non_executed_trades_neither_yield_records_nor_consume_net_export() {
     let settled = trade(
         "trade-a",
         SELLER_OWNER,
-        &hash(BUYER_OWNER),
+        &BUYER_OWNER.to_owned(),
         SLOT,
         3.0,
         TradeStatus::Settled,
@@ -454,7 +452,7 @@ fn unresolved_seller_yields_no_record_and_does_not_panic() {
     let t = trade(
         "trade-1",
         "owner-nobody",
-        &hash(BUYER_OWNER),
+        &BUYER_OWNER.to_owned(),
         SLOT,
         3.0,
         TradeStatus::Executed,
@@ -507,13 +505,51 @@ fn off_boundary_time_slot_yields_no_record() {
     let t = trade(
         "trade-1",
         SELLER_OWNER,
-        &hash(BUYER_OWNER),
+        &BUYER_OWNER.to_owned(),
         SLOT + 1,
         3.0,
         TradeStatus::Executed,
         100,
     );
     assert!(fixture.build(vec![t]).is_empty());
+}
+
+#[test]
+fn a_value_a_fraction_of_a_second_after_the_slot_start_is_not_evidence() {
+    // In whole seconds, 10:30:00.500 would be the slot start, 10:30:00.
+    let late = TimeseriesSchema {
+        timestamp: ts(SLOT) + TimeDelta::milliseconds(500),
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    };
+    let mut fixture = Fixture::new();
+    fixture.timeseries = vec![late.clone()];
+    assert!(fixture.build(vec![sale("trade-1", 3.0, 100)]).is_empty());
+
+    // A value exactly at the slot start is evidence; the late one adds nothing to it.
+    fixture.timeseries = vec![late, value(EXPORT_POINT, SLOT, 3.0)];
+    let records = fixture.build(vec![sale("trade-1", 3.0, 100)]);
+    assert_eq!(trade_references(&records), vec!["trade-1"]);
+    assert_eq!(
+        records[0].measurement_provenance.measurement_recorded_at,
+        SLOT
+    );
+    assert!(fixture.build(vec![sale("trade-1", 3.5, 100)]).is_empty());
+}
+
+#[test]
+fn a_slot_that_starts_off_a_whole_second_yields_no_record() {
+    let start = ts(SLOT) + TimeDelta::milliseconds(500);
+    let mut fixture = Fixture::new();
+    fixture.timeseries = vec![TimeseriesSchema {
+        timestamp: start,
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    }];
+    let markets = vec![MarketSchema {
+        delivery_start_time: start,
+        ..market(SLOT)
+    }];
+    let trades = vec![sale("trade-1", 3.0, 100)];
+    assert!(build_local_origin_records(trades, &fixture.inputs(&markets)).is_empty());
 }
 
 #[test]
@@ -684,7 +720,7 @@ fn sales_of_other_facilities_do_not_consume_the_seller_net_export() {
     let remote_sale = trade(
         "trade-a",
         REMOTE_OWNER,
-        &hash(BUYER_OWNER),
+        &BUYER_OWNER.to_owned(),
         SLOT,
         5.0,
         TradeStatus::Executed,
@@ -760,7 +796,7 @@ fn site_id_is_the_seller_facility_site() {
     let remote_sale = trade(
         "trade-remote",
         REMOTE_OWNER,
-        &hash(BUYER_OWNER),
+        &BUYER_OWNER.to_owned(),
         SLOT,
         2.0,
         TradeStatus::Executed,
@@ -818,7 +854,7 @@ fn cross_community_trade_is_inter_community() {
     let t = trade(
         "trade-1",
         SELLER_OWNER,
-        &hash(REMOTE_OWNER),
+        &REMOTE_OWNER.to_owned(),
         SLOT,
         3.0,
         TradeStatus::Executed,
@@ -850,7 +886,7 @@ fn a_community_buyer_is_named_by_its_community_id() {
     let t = trade(
         "trade-1",
         SELLER_OWNER,
-        &hash(OTHER_COMMUNITY),
+        &OTHER_COMMUNITY.to_owned(),
         SLOT,
         3.0,
         TradeStatus::Executed,
@@ -949,18 +985,28 @@ fn unrepresentable_time_slot_yields_no_record_and_does_not_panic() {
     assert_eq!(interval_bounds_utc(absurd, 900), None);
     assert_eq!(delivery_verification_reference(absurd, 900), None);
 
+    // Stored dates are always representable, but one before 1970 has no Unix-seconds
+    // slot: the trades of such a market are skipped.
+    let before_epoch = DateTime::<Utc>::from_timestamp(-900, 0).unwrap();
     let mut fixture = Fixture::new();
-    fixture.timeseries = vec![value(EXPORT_POINT, absurd, 4.0)];
+    fixture.timeseries = vec![TimeseriesSchema {
+        timestamp: before_epoch,
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    }];
     let t = trade(
         "trade-1",
         SELLER_OWNER,
-        &hash(BUYER_OWNER),
-        absurd,
+        &BUYER_OWNER.to_owned(),
+        SLOT,
         3.0,
         TradeStatus::Executed,
         100,
     );
-    assert!(fixture.build(vec![t]).is_empty());
+    let market = MarketSchema {
+        delivery_start_time: before_epoch,
+        ..market(SLOT)
+    };
+    assert!(build_local_origin_records(vec![t], &fixture.inputs(&[market])).is_empty());
 }
 
 #[test]
@@ -970,7 +1016,7 @@ fn records_sum_to_the_delivery_verified_energy_only() {
     let settled = trade(
         "trade-settled",
         SELLER_OWNER,
-        &hash(BUYER_OWNER),
+        &BUYER_OWNER.to_owned(),
         SLOT,
         2.0,
         TradeStatus::Settled,
@@ -993,7 +1039,7 @@ fn sort_records_is_deterministic() {
     let later_slot = trade(
         "trade-z",
         SELLER_OWNER,
-        &hash(BUYER_OWNER),
+        &BUYER_OWNER.to_owned(),
         SLOT + 900,
         1.0,
         TradeStatus::Executed,

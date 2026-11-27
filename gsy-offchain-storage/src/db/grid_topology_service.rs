@@ -1,15 +1,15 @@
+use super::id_service::IdService;
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
-use mongodb::bson::{doc, Bson, Document};
-use mongodb::error::ErrorKind;
+use mongodb::bson::{self, doc, Bson, Document};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
 use primitives::ewds::invalid_event;
-use primitives::utils::{epoch_to_rfc3339, now_epoch_secs, EPOCH_RFC3339};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -51,46 +51,20 @@ pub async fn init_pilot_sites(db: &DatabaseWrapper) -> Result<()> {
 }
 
 pub async fn init_communities(db: &DatabaseWrapper) -> Result<()> {
-    init_versioned(
-        &db.communities(),
-        "community_id",
-        &["community_id_1", "community_name_1"],
-    )
-    .await
+    init_versioned(&db.communities(), "community_id").await
 }
 
 pub async fn init_sites(db: &DatabaseWrapper) -> Result<()> {
-    init_versioned(&db.sites(), "site_id", &["site_name_1"]).await
+    init_versioned(&db.sites(), "site_id").await
 }
 
 pub async fn init_facilities(db: &DatabaseWrapper) -> Result<()> {
-    init_versioned(
-        &db.facilities(),
-        "facility_id",
-        &["facility_name_1", "facility_id_1"],
-    )
-    .await
+    init_versioned(&db.facilities(), "facility_id").await
 }
 
-async fn init_versioned<T: Send + Sync>(
-    collection: &Collection<T>,
-    id_field: &str,
-    unique_indexes: &[&str],
-) -> Result<()> {
-    for name in unique_indexes {
-        match collection.drop_index(*name).await {
-            Ok(()) => {}
-            Err(error) if is_missing(&error) => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    // Documents from before versioning become the oldest document of their id.
-    collection
-        .update_many(
-            doc! {"valid_from": {"$exists": false}},
-            doc! {"$set": {"valid_from": EPOCH_RFC3339}},
-        )
-        .await?;
+/// Indexes the versions of an entry by id, latest first. The `topology_versioning` migration
+/// prepares collections from before versioning.
+async fn init_versioned<T: Send + Sync>(collection: &Collection<T>, id_field: &str) -> Result<()> {
     collection
         .create_index(
             IndexModel::builder()
@@ -99,17 +73,6 @@ async fn init_versioned<T: Send + Sync>(
         )
         .await?;
     Ok(())
-}
-
-/// Whether `error` says that the index or the collection does not exist.
-fn is_missing(error: &mongodb::error::Error) -> bool {
-    const NAMESPACE_NOT_FOUND: i32 = 26;
-    const INDEX_NOT_FOUND: i32 = 27;
-    matches!(
-        error.kind.as_ref(),
-        ErrorKind::Command(command)
-            if command.code == NAMESPACE_NOT_FOUND || command.code == INDEX_NOT_FOUND
-    )
 }
 
 async fn collect_all<T>(collection: &Collection<T>) -> Result<Vec<T>>
@@ -132,7 +95,12 @@ impl AssetService {
     }
 
     pub async fn get_by_facility(&self, facility_name: &str) -> Result<Vec<AssetSchema>> {
-        Ok(self.0.find(doc! {"facility_name": facility_name}).await?.try_collect().await?)
+        Ok(self
+            .0
+            .find(doc! {"facility_name": facility_name})
+            .await?
+            .try_collect()
+            .await?)
     }
 
     pub async fn get_all(&self) -> Result<Vec<AssetSchema>> {
@@ -195,8 +163,13 @@ pub trait TopologyEntry:
 
     fn id(&self) -> &str;
     fn name(&self) -> &str;
-    fn valid_from(&self) -> &str;
-    fn set_valid_from(&mut self, valid_from: String);
+    fn valid_from(&self) -> DateTime<Utc>;
+    fn set_valid_from(&mut self, valid_from: DateTime<Utc>);
+    fn normalize_ids(self) -> Result<Self>;
+
+    fn actor_ids(&self) -> Vec<&str> {
+        vec![self.id()]
+    }
 }
 
 impl TopologyEntry for EnergyCommunitySchema {
@@ -204,16 +177,20 @@ impl TopologyEntry for EnergyCommunitySchema {
     const COLLECTION: &'static str = "communities";
     const ID_FIELD: &'static str = "community_id";
 
+    fn normalize_ids(self) -> Result<Self> {
+        EnergyCommunitySchema::normalize_ids(self)
+    }
+
     fn id(&self) -> &str {
         &self.community_id
     }
     fn name(&self) -> &str {
         &self.community_name
     }
-    fn valid_from(&self) -> &str {
-        &self.valid_from
+    fn valid_from(&self) -> DateTime<Utc> {
+        self.valid_from
     }
-    fn set_valid_from(&mut self, valid_from: String) {
+    fn set_valid_from(&mut self, valid_from: DateTime<Utc>) {
         self.valid_from = valid_from;
     }
 }
@@ -223,16 +200,20 @@ impl TopologyEntry for SiteSchema {
     const COLLECTION: &'static str = "sites";
     const ID_FIELD: &'static str = "site_id";
 
+    fn normalize_ids(self) -> Result<Self> {
+        SiteSchema::normalize_ids(self)
+    }
+
     fn id(&self) -> &str {
         &self.site_id
     }
     fn name(&self) -> &str {
         &self.site_name
     }
-    fn valid_from(&self) -> &str {
-        &self.valid_from
+    fn valid_from(&self) -> DateTime<Utc> {
+        self.valid_from
     }
-    fn set_valid_from(&mut self, valid_from: String) {
+    fn set_valid_from(&mut self, valid_from: DateTime<Utc>) {
         self.valid_from = valid_from;
     }
 }
@@ -242,16 +223,24 @@ impl TopologyEntry for FacilitySchema {
     const COLLECTION: &'static str = "facilities";
     const ID_FIELD: &'static str = "facility_id";
 
+    fn normalize_ids(self) -> Result<Self> {
+        FacilitySchema::normalize_ids(self)
+    }
+
+    fn actor_ids(&self) -> Vec<&str> {
+        vec![&self.facility_id, &self.owner_id]
+    }
+
     fn id(&self) -> &str {
         &self.facility_id
     }
     fn name(&self) -> &str {
         &self.facility_name
     }
-    fn valid_from(&self) -> &str {
-        &self.valid_from
+    fn valid_from(&self) -> DateTime<Utc> {
+        self.valid_from
     }
-    fn set_valid_from(&mut self, valid_from: String) {
+    fn set_valid_from(&mut self, valid_from: DateTime<Utc>) {
         self.valid_from = valid_from;
     }
 }
@@ -279,8 +268,7 @@ pub type EnergyCommunityService = TopologyService<EnergyCommunitySchema>;
 pub type SiteService = TopologyService<SiteSchema>;
 pub type FacilityService = TopologyService<FacilitySchema>;
 
-#[repr(transparent)]
-pub struct TopologyService<T: TopologyEntry>(pub Collection<T>);
+pub struct TopologyService<T: TopologyEntry>(pub Collection<T>, IdService);
 
 impl<T: TopologyEntry> TopologyService<T> {
     /// The latest entries, ordered by id: the latest document of each id, unless its
@@ -295,7 +283,7 @@ impl<T: TopologyEntry> TopologyService<T> {
     }
 
     async fn latest(&self, filter: Document) -> Result<Vec<T>> {
-        let now = epoch_to_rfc3339(now_epoch_secs());
+        let now = bson::DateTime::now();
         let pipeline = [
             doc! {"$match": filter},
             doc! {"$group": {
@@ -334,6 +322,10 @@ impl<T: TopologyEntry> TopologyService<T> {
     /// their names. Storing the same entries again changes nothing, so a failed call can be
     /// retried. Calls for one collection run one after another.
     pub async fn store(&self, entries: Vec<T>) -> Result<Vec<T>> {
+        let entries = entries
+            .into_iter()
+            .map(|entry| entry.normalize_ids().map_err(invalid_event))
+            .collect::<Result<Vec<_>>>()?;
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
         for entry in &entries {
@@ -376,10 +368,19 @@ impl<T: TopologyEntry> TopologyService<T> {
             )))));
         }
 
-        let valid_from = epoch_to_rfc3339(now_epoch_secs());
+        // Mappings precede topology visibility and survive updates/deletion for chain replay.
+        // References alone never register another entity or grant eligibility.
+        for entry in &entries {
+            for actor_id in entry.actor_ids() {
+                self.1.get_or_create(actor_id.to_string()).await?;
+            }
+        }
+
+        // At the precision of a BSON date, so that each returned entry equals its document.
+        let valid_from = bson::DateTime::now().to_chrono();
         let mut stored = Vec::with_capacity(entries.len());
         for mut entry in entries {
-            entry.set_valid_from(valid_from.clone());
+            entry.set_valid_from(valid_from);
             match self.latest_document(entry.id()).await? {
                 Some(latest) if unchanged(&latest, &entry) => stored.push(latest),
                 _ => {
@@ -395,13 +396,13 @@ impl<T: TopologyEntry> TopologyService<T> {
 /// Whether `entry` equals `latest` apart from `valid_from`.
 fn unchanged<T: TopologyEntry>(latest: &T, entry: &T) -> bool {
     let mut latest = latest.clone();
-    latest.set_valid_from(entry.valid_from().to_string());
+    latest.set_valid_from(entry.valid_from());
     latest == *entry
 }
 
 impl<T: TopologyEntry> From<&DatabaseWrapper> for TopologyService<T> {
     fn from(db: &DatabaseWrapper) -> Self {
-        TopologyService(db.collection(T::COLLECTION))
+        TopologyService(db.collection(T::COLLECTION), db.ids())
     }
 }
 

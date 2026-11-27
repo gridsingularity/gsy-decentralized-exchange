@@ -5,8 +5,8 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "facilityId": { "type": "string", "minLength": 1 },
-    "communityUuid": { "type": "string", "minLength": 1 },
+    "facilityId": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Off-chain facility ID: unpadded identities are preserved exactly and are case-sensitive, including UUID-shaped strings." },
+    "communityUuid": { "type": "string", "description": "Typed ingestion requires a nonempty, unpadded off-chain community identity, preserved exactly and case-sensitive. Query responses may contain a datasource label or an empty string when point metadata is absent." },
     "timeSlot": { "type": "string", "format": "date-time" },
     "creationTime": { "type": "string", "format": "date-time" },
     "energyKwh": {

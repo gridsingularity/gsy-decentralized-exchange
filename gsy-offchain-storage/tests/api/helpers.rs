@@ -1,10 +1,10 @@
+use chrono::DateTime;
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::grid_topology_service::{TopologyEntry, TopologyService};
 use gsy_offchain_storage::db::{delete_database, init_database, DatabaseWrapper};
 use gsy_offchain_storage::http_server::run_http_server;
 use once_cell::sync::Lazy;
 use primitives::log::setup_logging;
-use primitives::utils::EPOCH_RFC3339;
 use std::net::TcpListener;
 use uuid::Uuid;
 
@@ -49,6 +49,24 @@ pub async fn init_app() -> TestApp {
     }
 }
 
+/// Starts the service again on the same database, which runs the migrations it does not record.
+pub async fn restart(app: &TestApp) {
+    let configuration = get_configuration().unwrap();
+    init_database(configuration.get_connection_string(), app.db_name.clone())
+        .await
+        .unwrap();
+}
+
+/// Makes the database look like one from before any migration ran, so that the next start runs
+/// them all.
+pub async fn forget_migrations(app: &TestApp) {
+    app.db_wrapper
+        .collection::<mongodb::bson::Document>("migrations")
+        .drop()
+        .await
+        .unwrap();
+}
+
 pub async fn stop_app(app: TestApp) {
     let configuration = get_configuration().expect("Failed to read configuration");
     delete_database(configuration.get_connection_string(), app.db_name)
@@ -56,12 +74,25 @@ pub async fn stop_app(app: TestApp) {
         .unwrap();
 }
 
-/// The latest entries of `service`, with `valid_from` set to [`EPOCH_RFC3339`], so that tests
+/// A whole-second UTC time, as stored for chain timestamps.
+pub fn ts(epoch_secs: u64) -> chrono::DateTime<chrono::Utc> {
+    primitives::utils::epoch_to_datetime(epoch_secs).unwrap()
+}
+
+/// Deterministic UUIDv4 bytes for entity fixtures, never actor identities.
+pub fn entity_bytes(seed: u8) -> [u8; 16] {
+    let mut bytes = [seed; 16];
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    bytes
+}
+
+/// The latest entries of `service`, with `valid_from` set to the Unix epoch, so that tests
 /// can compare them with what they sent.
 pub async fn stored<T: TopologyEntry>(service: TopologyService<T>) -> Vec<T> {
     let mut entries = service.get().await.unwrap();
     entries
         .iter_mut()
-        .for_each(|entry| entry.set_valid_from(EPOCH_RFC3339.to_string()));
+        .for_each(|entry| entry.set_valid_from(DateTime::UNIX_EPOCH));
     entries
 }

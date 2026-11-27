@@ -1,4 +1,5 @@
 pub mod db_api_schema;
+pub mod actor_ids;
 
 pub mod certificates;
 pub mod constants;
@@ -114,16 +115,6 @@ impl FromStr for MatchingAlgorithm {
             )),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum MarketTimeSeriesGranularity {
-    #[serde(rename = "15min")]
-    FifteenMinutes,
-    #[serde(rename = "1h")]
-    OneHour,
-    #[serde(rename = "1d")]
-    OneDay,
 }
 
 #[cfg(test)]

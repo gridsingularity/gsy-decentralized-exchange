@@ -1,5 +1,9 @@
 #![allow(non_snake_case)]
 
+use bson::serde_helpers::{
+    chrono_datetime_as_bson_datetime, chrono_datetime_as_bson_datetime_optional,
+};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Trade lifecycle status. On-chain match indexing creates Matched, not Settled.
@@ -27,10 +31,13 @@ pub struct TradeParameters {
 pub struct DbTradeSchema {
     pub trade_uuid: String,
     pub status: TradeStatus,
+    /// Original off-chain seller owner ID, not its keyed on-chain pseudonym.
     pub seller: String,
+    /// Original off-chain buyer owner ID (or community identity for community trades).
     pub buyer: String,
     pub market_id: String,
-    pub creation_time: u64,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub creation_time: DateTime<Utc>,
     pub offer_hash: String,
     pub bid_hash: String,
     #[serde(default)]
@@ -38,10 +45,14 @@ pub struct DbTradeSchema {
     #[serde(default)]
     pub residual_bid_id: Option<String>,
     pub parameters: TradeParameters,
-    /// Unix seconds of the last status event, including initial match confirmation.
+    /// Time of the last status event, including initial match confirmation.
     /// `None` for legacy records and imports without a known status timestamp.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_updated_at: Option<u64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub status_updated_at: Option<DateTime<Utc>>,
 }
 
 impl DbTradeSchema {
@@ -97,7 +108,8 @@ pub struct ClearingResultSchema {
     pub traded_quantity: f64,
     pub num_trades: u32,
     pub tx_hash: String,
-    pub clearing_time: u64,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub clearing_time: DateTime<Utc>,
 }
 
 // todo: move this to markets.rs

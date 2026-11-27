@@ -10,7 +10,8 @@ abigen!(
     MarketControllerContract,
     r#"[
         function hasRole(bytes32 role, address account) external view returns (bool)
-        function marketsExist(bytes16[] marketIds) external view returns (bool[])
+        struct MarketKey { bytes16 communityId; uint8 marketType; uint64 deliveryStartTime; }
+        function getMarketIds(MarketKey[] keys) external view returns (bytes16[])
         struct NewMarket { bytes16 marketId; bytes16 communityId; uint64 openingTime; uint64 closingTime; uint64 deliveryStartTime; uint64 deliveryEndTime; uint8 marketType; uint8 matchingAlgorithm; }
         function createMarkets(NewMarket[] newMarkets) external
     ]"#
@@ -21,8 +22,8 @@ type WsSignerMiddleware = SignerMiddleware<Provider<Ws>, LocalWallet>;
 #[async_trait]
 pub trait MarketChainClient: Send + Sync {
     async fn is_operator_registered(&self) -> Result<bool>;
-    /// One `eth_call` for all IDs; `result[i]` is true if `market_ids[i]` exists.
-    async fn markets_exist(&self, market_ids: Vec<[u8; 16]>) -> Result<Vec<bool>>;
+    /// One `eth_call` for all keys; `result[i]` is the ID for `keys[i]`, or zero if missing.
+    async fn get_market_ids(&self, keys: Vec<MarketKey>) -> Result<Vec<[u8; 16]>>;
     /// Creates the markets in one transaction; existing ones are skipped on-chain.
     async fn create_markets(&self, new_markets: Vec<NewMarket>) -> Result<()>;
 }
@@ -78,21 +79,17 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
         Ok(is_registered)
     }
 
-    async fn markets_exist(&self, market_ids: Vec<[u8; 16]>) -> Result<Vec<bool>> {
-        let market_count = market_ids.len();
-        let exists = self
-            .market_controller
-            .markets_exist(market_ids)
-            .call()
-            .await?;
-        if exists.len() != market_count {
+    async fn get_market_ids(&self, keys: Vec<MarketKey>) -> Result<Vec<[u8; 16]>> {
+        let key_count = keys.len();
+        let market_ids = self.market_controller.get_market_ids(keys).call().await?;
+        if market_ids.len() != key_count {
             return Err(anyhow!(
-                "marketsExist returned {} results for {} markets",
-                exists.len(),
-                market_count
+                "getMarketIds returned {} results for {} keys",
+                market_ids.len(),
+                key_count
             ));
         }
-        Ok(exists)
+        Ok(market_ids)
     }
 
     async fn create_markets(&self, new_markets: Vec<NewMarket>) -> Result<()> {

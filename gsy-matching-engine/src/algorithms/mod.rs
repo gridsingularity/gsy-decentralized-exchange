@@ -118,10 +118,7 @@ impl MatchingData {
                     return matches;
                 }
 
-                if offer.area_uuid == bid.area_uuid
-                    || offer.created_by == bid.created_by
-                    || offer.energy_rate > bid.energy_rate
-                {
+                if offer.created_by == bid.created_by || offer.energy_rate > bid.energy_rate {
                     continue;
                 }
 
@@ -177,7 +174,7 @@ fn fill_order_pair(
         selected_energy: energy,
         energy_rate: rate,
     };
-    // The next fill must consume the residual registered by this settlement.
+    // The next fill must consume the residual registered by this match.
     match &matched.residual_bid {
         Some(residual) => *bid = residual.clone(),
         None => bid.energy = 0,

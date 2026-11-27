@@ -1,15 +1,15 @@
 use super::*;
 use primitives::db_api_schema::orders::{DbAttributes, DbRequirements, EnergyType};
+use primitives::utils::epoch_to_datetime;
 
 fn db_order(id: u8, side: OrderEnum, energy: f64) -> DbOrderSchema {
-    let id = bytes16_to_hex([id; 16]);
+    let id = entity_id(id);
     DbOrderSchema {
         order_id: id.clone(),
-        created_by: id.clone(),
-        area_uuid: id,
-        market_id: bytes16_to_hex([99; 16]),
-        time_slot: 100,
-        creation_time: 90,
+        created_by: id,
+        market_id: entity_id(99),
+        time_slot: epoch_to_datetime(100).unwrap(),
+        creation_time: epoch_to_datetime(90).unwrap(),
         energy_kWh: energy,
         energy_rate: if side == OrderEnum::Bid { 20.0 } else { 10.0 },
         order_type: side,
@@ -53,7 +53,7 @@ fn preserves_offer_requirements_and_attributes_during_conversion() {
     assert_eq!(
         converted.requirements,
         Some(Requirements {
-            trading_partner_id: Some("0x00000000000000000000000000000002".to_string()),
+            trading_partner_id: Some("00000000-0000-0000-0000-000000000002".to_string()),
             preferred_energy_rate: Some((12.5 * NODE_FLOAT_SCALING_FACTOR).round() as u64),
             energy_type: Some(EnergyType::Green),
         })
@@ -65,7 +65,7 @@ fn preserves_offer_requirements_and_attributes_during_conversion() {
         })
     );
 
-    offer.requirements.as_mut().unwrap().trading_partner_id = Some("invalid-id".to_string());
+    offer.requirements.as_mut().unwrap().trading_partner_id = Some(" padded-id".to_string());
     assert!(convert_db_order_to_canonical(&offer).is_err());
 }
 
@@ -103,7 +103,7 @@ fn converted_offer_preferences_participate_in_both_matching_algorithms() {
                 }
                 if case == "conflicting-partner" {
                     offer.requirements.as_mut().unwrap().trading_partner_id =
-                        Some(bytes16_to_hex([3; 16]));
+                        Some(entity_id(3));
                 } else if case == "different-rates" {
                     offer.requirements.as_mut().unwrap().preferred_energy_rate = Some(16.0);
                 }
@@ -205,7 +205,7 @@ fn rejects_unknown_out_of_order_and_repeated_consumption() {
     replay.push(matches[0].clone());
     assert!(convert_matches(replay, &lookup).is_err());
     let mut unknown = matches;
-    unknown[0].bid.order_id = bytes16_to_hex([42; 16]);
+    unknown[0].bid.order_id = entity_id(42);
     assert!(convert_matches(unknown, &lookup).is_err());
 }
 
@@ -229,7 +229,7 @@ fn rejects_invalid_residual_ids_and_quantities() {
         let item = &mut invalid_matches[0];
         match invalid {
             "missing" => item.residual_bid = None,
-            "zero-id" => item.residual_bid.as_mut().unwrap().order_id = bytes16_to_hex([0; 16]),
+            "zero-id" => item.residual_bid.as_mut().unwrap().order_id = "00000000-0000-0000-0000-000000000000".to_string(),
             "existing-id" => {
                 item.residual_bid.as_mut().unwrap().order_id = item.offer.order_id.clone()
             }
@@ -289,7 +289,7 @@ fn convert_matches(
 
 #[test]
 fn keeps_requirements_of_bids_and_offers() {
-    let partner = bytes16_to_hex([7; 16]);
+    let partner = entity_id(7);
     for side in [OrderEnum::Bid, OrderEnum::Offer] {
         let mut order = db_order(1, side.clone(), 10.0);
         order.requirements = Some(DbRequirements {
@@ -309,4 +309,8 @@ fn keeps_requirements_of_bids_and_offers() {
             Some((12.0 * NODE_FLOAT_SCALING_FACTOR) as u64)
         );
     }
+}
+
+fn entity_id(seed: u8) -> String {
+    format!("00000000-0000-4000-8000-{seed:012x}")
 }

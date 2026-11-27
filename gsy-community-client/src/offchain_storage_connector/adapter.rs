@@ -1,10 +1,10 @@
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
-    TimeseriesSchema,
 };
-use primitives::ewds::dto::EwdsFacilityDto;
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::ewds::dto::{EwdsFacilityDto, TimeseriesDto};
+use primitives::utils::{profile_measurement_id, validate_offchain_actor_id};
 use reqwest::Client;
 use std::env;
 
@@ -31,23 +31,24 @@ impl AreaMarketInfoAdapter {
         }
     }
 
-    pub async fn forward_forecast(
-        &self,
-        forecasts: Vec<ForecastSchema>,
-    ) -> Result<(), reqwest::Error> {
+    pub async fn forward_forecast(&self, mut forecasts: Vec<ForecastSchema>) -> anyhow::Result<()> {
+        for forecast in &mut forecasts {
+            forecast.facility_id = validate_offchain_actor_id(&forecast.facility_id)?;
+            forecast.community_uuid = validate_offchain_actor_id(&forecast.community_uuid)?;
+        }
         let measurement_points = forecasts
             .iter()
             .map(forecast_measurement_point)
             .collect::<Vec<_>>();
         let timeseries = forecasts
             .iter()
-            .map(|forecast| TimeseriesSchema {
+            .map(|forecast| TimeseriesDto {
                 measurement_point: profile_measurement_id(
                     MeasurementPointType::Forecast,
                     forecast.community_uuid.as_str(),
                     forecast.facility_id.as_str(),
                 ),
-                timestamp: timestamp_to_string_with_padding(forecast.time_slot),
+                timestamp: forecast.time_slot.to_rfc3339(),
                 value: forecast.energy_kwh,
             })
             .collect::<Vec<_>>();
@@ -69,21 +70,25 @@ impl AreaMarketInfoAdapter {
 
     pub async fn forward_measurement(
         &self,
-        measurements: Vec<MeasurementSchema>,
-    ) -> Result<(), reqwest::Error> {
+        mut measurements: Vec<MeasurementSchema>,
+    ) -> anyhow::Result<()> {
+        for measurement in &mut measurements {
+            measurement.facility_id = validate_offchain_actor_id(&measurement.facility_id)?;
+            measurement.community_uuid = validate_offchain_actor_id(&measurement.community_uuid)?;
+        }
         let measurement_points = measurements
             .iter()
             .map(measurement_point)
             .collect::<Vec<_>>();
         let timeseries = measurements
             .iter()
-            .map(|measurement| TimeseriesSchema {
+            .map(|measurement| TimeseriesDto {
                 measurement_point: profile_measurement_id(
                     MeasurementPointType::Measurement,
                     measurement.community_uuid.as_str(),
                     measurement.facility_id.as_str(),
                 ),
-                timestamp: timestamp_to_string_with_padding(measurement.time_slot),
+                timestamp: measurement.time_slot.to_rfc3339(),
                 value: measurement.energy_kwh,
             })
             .collect::<Vec<_>>();
@@ -104,16 +109,16 @@ impl AreaMarketInfoAdapter {
     }
 
     // Validation logic (basic validation, can be extended)
-    pub fn validate_forecast(&self, forecast: &ForecastSchema, seconds_since_epoch: u64) -> bool {
-        forecast.energy_kwh > 0.0 && forecast.time_slot > seconds_since_epoch
+    pub fn validate_forecast(&self, forecast: &ForecastSchema, now: DateTime<Utc>) -> bool {
+        forecast.energy_kwh > 0.0 && forecast.time_slot > now
     }
 
     pub fn validate_measurement(
         &self,
         measurement: &MeasurementSchema,
-        seconds_since_epoch: u64,
+        now: DateTime<Utc>,
     ) -> bool {
-        measurement.energy_kwh > 0.0 && measurement.time_slot <= seconds_since_epoch
+        measurement.energy_kwh > 0.0 && measurement.time_slot <= now
     }
 
     pub async fn forward_facilities(&self, facilities: FacilitySchema) -> anyhow::Result<()> {
@@ -131,18 +136,6 @@ impl AreaMarketInfoAdapter {
         }
         Ok(())
     }
-}
-
-fn profile_measurement_id(
-    point_type: MeasurementPointType,
-    community_uuid: &str,
-    facility_id: &str,
-) -> String {
-    let prefix = match point_type {
-        MeasurementPointType::Measurement => "measurement",
-        MeasurementPointType::Forecast => "forecast",
-    };
-    format!("{prefix}:{community_uuid}:{facility_id}")
 }
 
 fn forecast_measurement_point(forecast: &ForecastSchema) -> MeasurementPointSchema {

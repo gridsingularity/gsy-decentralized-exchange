@@ -1,14 +1,16 @@
 use gsy_matching_engine::algorithms::PayAsClearPricing;
 use gsy_matching_engine::connectors::evm_connector::{
-    match_order_books, partition_orders_by_market_slot,
+    markets_due_for_clearing, match_order_books, partition_orders_by_market_slot, MarketWindow,
 };
 use gsy_matching_engine::models::Order;
 use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
 use primitives::db_api_schema::trades::ClearingStatus;
+use primitives::matching::ClearingSchedule;
 use primitives::MatchingAlgorithm;
+use std::collections::{HashMap, HashSet};
 
 fn id(value: u8) -> String {
-    format!("0x{value:032x}")
+    format!("00000000-0000-4000-8000-{value:012x}")
 }
 
 fn order(id_value: u8, order_type: OrderEnum, market: u8, time_slot: u64) -> Order {
@@ -16,7 +18,6 @@ fn order(id_value: u8, order_type: OrderEnum, market: u8, time_slot: u64) -> Ord
         order_id: id(id_value),
         order_type,
         status: OrderStatus::Submitted,
-        area_uuid: id(id_value),
         market_id: id(market),
         time_slot,
         creation_time: 1,
@@ -283,4 +284,69 @@ fn clearing_is_partial_when_energy_is_left_on_both_sides() {
     assert_eq!(clearing_result.total_supply, Some(7));
     assert_eq!(clearing_result.traded_quantity, Some(5));
     assert_eq!(clearing_result.clearing_status, ClearingStatus::Partial);
+}
+
+const OPENING: u64 = 1_700_000_100;
+
+fn market_windows(checked_until: u64) -> HashMap<String, MarketWindow> {
+    // Market 1 is open for 15 minutes, market 2 for two hours.
+    [(1, 900), (2, 7200)]
+        .into_iter()
+        .map(|(market, duration)| {
+            (
+                id(market),
+                MarketWindow {
+                    opening_time: OPENING,
+                    closing_time: OPENING + duration,
+                    checked_until,
+                },
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn each_market_is_due_at_the_clearing_times_of_its_own_window() {
+    let schedule = ClearingSchedule {
+        clearings_per_market: 3,
+        final_clearing_lead_seconds: 20,
+    };
+    let due = |checked_until, now| {
+        markets_due_for_clearing(&market_windows(checked_until), &schedule, now)
+    };
+
+    assert!(due(OPENING, OPENING + 299).is_empty());
+    assert_eq!(due(OPENING + 299, OPENING + 300), HashSet::from([id(1)]));
+    assert!(due(OPENING + 300, OPENING + 301).is_empty());
+    assert_eq!(due(OPENING + 879, OPENING + 880), HashSet::from([id(1)]));
+    assert_eq!(due(OPENING + 2399, OPENING + 2400), HashSet::from([id(2)]));
+    assert_eq!(due(OPENING + 7179, OPENING + 7180), HashSet::from([id(2)]));
+}
+
+#[test]
+fn a_single_clearing_per_market_is_due_once_before_the_close() {
+    let schedule = ClearingSchedule::default();
+    let mut due_times = Vec::new();
+    for now in OPENING + 1..OPENING + 7300 {
+        let due = markets_due_for_clearing(&market_windows(now - 1), &schedule, now);
+        due_times.extend(due.into_iter().map(|market_id| (market_id, now)));
+    }
+    due_times.sort();
+
+    assert_eq!(
+        due_times,
+        vec![(id(1), OPENING + 880), (id(2), OPENING + 7180)]
+    );
+}
+
+#[test]
+fn a_closed_market_is_not_due() {
+    // A clearing that was missed until the market closed is dropped.
+    let schedule = ClearingSchedule::default();
+
+    assert_eq!(
+        markets_due_for_clearing(&market_windows(OPENING), &schedule, OPENING + 899),
+        HashSet::from([id(1)])
+    );
+    assert!(markets_due_for_clearing(&market_windows(OPENING), &schedule, OPENING + 900).is_empty());
 }

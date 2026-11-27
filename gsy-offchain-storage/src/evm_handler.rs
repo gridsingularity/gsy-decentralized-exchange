@@ -1,3 +1,4 @@
+use crate::db::pending_events::{PendingEvent, UnresolvedEvent, COLLECTION};
 use crate::db::DatabaseWrapper;
 use crate::ewds_event_handler::EwdsEventPublisher;
 use anyhow::{anyhow, Context, Result};
@@ -6,8 +7,9 @@ use ethers::contract::LogMeta;
 use ethers::types::U256;
 use futures::TryStreamExt;
 use gsy_ethers_listener::{
-    DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, NewMarketCreatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeSettledFilter,
+    ChainEvent, DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter,
+    NewMarketCreatedFilter, OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter,
+    TradeMatchedFilter,
 };
 use mongodb::bson::{self, doc};
 use primitives::db_api_schema::{
@@ -18,8 +20,11 @@ use primitives::db_api_schema::{
     trades::{ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus},
 };
 use primitives::ewds::dto::EwdsMarketDto;
-use primitives::utils::{bytes16_to_hex, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR};
-use tracing::info;
+use primitives::utils::{
+    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_datetime, NODE_FLOAT_SCALING_FACTOR,
+};
+use std::collections::HashSet;
+use tracing::{error, info};
 
 fn scaled_u256_to_f64(value: U256) -> f64 {
     value.as_u128() as f64 / NODE_FLOAT_SCALING_FACTOR
@@ -31,6 +36,53 @@ pub struct OffchainStorageEvmHandler {
 }
 
 impl OffchainStorageEvmHandler {
+    async fn resolve_actor(&self, onchain_id: [u8; 16]) -> Result<String> {
+        let hash = bytes16_to_hex(onchain_id);
+        self.db
+            .ids()
+            .filter(Some(hash.clone()), None)
+            .await?
+            .pop()
+            .map(|mapping| mapping.offchain_id)
+            .ok_or_else(|| UnresolvedEvent(format!("No actor mapping for {hash}")).into())
+    }
+
+    async fn require_order(&self, order_id: &str) -> Result<DbOrderSchema> {
+        self.db
+            .orders()
+            .get_order_by_id(&order_id.into())
+            .await?
+            .ok_or_else(|| UnresolvedEvent(format!("Missing order {order_id}")).into())
+    }
+
+    async fn replay_pending(&self, stream_id: &str) -> Result<()> {
+        let collection = self.db.collection::<PendingEvent>(COLLECTION);
+        let events: Vec<PendingEvent> = collection
+            .find(doc! {"stream_id": stream_id})
+            .sort(doc! {"block_number": 1, "log_index": 1})
+            .await?
+            .try_collect()
+            .await?;
+        let mut blocked = HashSet::new();
+        for pending in events {
+            if pending.dependencies.iter().any(|key| blocked.contains(key)) {
+                blocked.extend(pending.dependencies);
+                continue;
+            }
+            match pending.event.dispatch(self).await {
+                Ok(()) => {
+                    collection.delete_one(doc! {"_id": &pending.id}).await?;
+                }
+                Err(error) if error.downcast_ref::<UnresolvedEvent>().is_some() => {
+                    error!(event_id = %pending.id, %error, "Retaining unresolved chain event for replay");
+                    blocked.extend(pending.dependencies);
+                }
+                Err(error) => return Err(error.context(format!("Projecting event {}", pending.id))),
+            }
+        }
+        Ok(())
+    }
+
     /// Read back persisted snapshots before publishing; HTTP-only operation stays local.
     async fn publish_order_statuses(&self, order_ids: &[String]) -> Result<()> {
         if let Some(publisher) = &self.event_publisher {
@@ -56,6 +108,60 @@ impl OffchainStorageEvmHandler {
 
 #[async_trait]
 impl GsyEventHandler for OffchainStorageEvmHandler {
+    async fn handle_event(&self, event: ChainEvent) -> Result<()> {
+        let mut pending = PendingEvent::new(event)?;
+        // Cancellation/verification logs carry no market. Recover their scope from
+        // existing projections or an earlier pending placement/match when possible.
+        if pending.market_ids.is_empty() {
+            for key in &pending.dependencies {
+                let market = if let Some(id) = key.strip_prefix("order:") {
+                    self.db
+                        .orders()
+                        .find_one(doc! {"order_id": id})
+                        .await?
+                        .map(|o| o.market_id)
+                } else if let Some(id) = key.strip_prefix("trade:") {
+                    self.db
+                        .trades()
+                        .find_one(doc! {"trade_uuid": id})
+                        .await?
+                        .map(|t| t.market_id)
+                } else {
+                    None
+                };
+                if let Some(id) = market {
+                    pending.market_ids.push(id);
+                }
+            }
+            let related: Vec<PendingEvent> = self.db.collection::<PendingEvent>(COLLECTION)
+                .find(doc! {"stream_id": &pending.stream_id, "dependencies": {"$in": &pending.dependencies}})
+                .await?.try_collect().await?;
+            for event in related {
+                pending.market_ids.extend(event.market_ids);
+            }
+            pending.market_ids.sort();
+            pending.market_ids.dedup();
+            pending
+                .dependencies
+                .extend(pending.market_ids.iter().map(|id| format!("market:{id}")));
+        }
+        self.db
+            .collection::<PendingEvent>(COLLECTION)
+            .update_one(
+                doc! {"_id": &pending.id},
+                doc! {"$setOnInsert": bson::to_document(&pending)?},
+            )
+            .upsert(true)
+            .await?;
+        // Project after the entire block has been durably received, not once per log.
+        Ok(())
+    }
+
+    async fn finish_block(&self, stream_id: &str, block_timestamp: u64) -> Result<()> {
+        self.replay_pending(stream_id).await?;
+        self.handle_block(block_timestamp).await
+    }
+
     async fn start_block(&self, stream_id: &str, live_start: u64) -> Result<u64> {
         let cursor = self
             .db
@@ -84,6 +190,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
     }
 
     async fn handle_block(&self, block_timestamp: u64) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         let submitted = bson::to_bson(&OrderStatus::Submitted)?;
         let market_ids = self
             .db
@@ -98,12 +205,24 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .markets()
             .find(doc! {
                 "market_id": {"$in": market_ids},
-                "closing_time": {"$lte": timestamp_to_string_with_padding(block_timestamp)},
+                "closing_time": {"$lte": bson::DateTime::from_chrono(block_timestamp)},
             })
             .await?
             .try_collect()
             .await?;
         for market in markets {
+            // Do not let closure overtake an earlier deferred match/cancellation.
+            if self
+                .db
+                .collection::<PendingEvent>(COLLECTION)
+                .find_one(doc! {
+                    "$or": [{"market_ids": &market.market_id}, {"market_ids": {"$size": 0}}]
+                })
+                .await?
+                .is_some()
+            {
+                continue;
+            }
             let order_ids = self
                 .db
                 .orders()
@@ -120,7 +239,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             // The deadline is immutable and remains stable even if indexing is delayed.
             self.db
                 .orders()
-                .expire_market_orders(&market.market_id, market.closing_time.parse()?)
+                .expire_market_orders(&market.market_id, market.closing_time)
                 .await?;
             self.publish_order_statuses(&order_ids).await?;
         }
@@ -132,6 +251,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: OrderPlacedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         info!(
             "Processing EVM OrderPlaced: {:?}",
             hex::encode(event.order_id)
@@ -140,9 +260,9 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let energy_f64 = event.energy as f64 / NODE_FLOAT_SCALING_FACTOR;
         let rate_f64 = event.energy_rate as f64 / NODE_FLOAT_SCALING_FACTOR;
 
-        let market_id_str = bytes16_to_hex(event.market_id);
-        let order_id_str = bytes16_to_hex(event.order_id);
-        let created_by_str = bytes16_to_hex(event.created_by);
+        let market_id_str = bytes16_to_uuid_string(event.market_id);
+        let order_id_str = bytes16_to_uuid_string(event.order_id);
+        let created_by_str = self.resolve_actor(event.created_by).await?;
 
         let order_enum = if event.is_bid {
             OrderEnum::Bid
@@ -159,14 +279,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .as_mut()
             .and_then(|value| value.trading_partner_id.as_mut())
         {
-            *partner = self
-                .db
-                .ids()
-                .filter(Some(partner.clone()), None)
-                .await?
-                .pop()
-                .with_context(|| format!("No owner ID mapping for on-chain ID {}", partner))?
-                .offchain_id;
+            *partner = self.resolve_actor(event.preferred_trading_partner).await?;
         }
 
         let schema = DbOrderSchema {
@@ -174,10 +287,9 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             status: OrderStatus::Submitted,
             status_updated_at: Some(block_timestamp),
             order_type: order_enum,
-            area_uuid: created_by_str.clone(),
             market_id: market_id_str,
-            time_slot: event.time_slot,
-            creation_time: event.creation_time,
+            time_slot: epoch_to_datetime(event.time_slot)?,
+            creation_time: epoch_to_datetime(event.creation_time)?,
             energy_kWh: energy_f64,
             energy_rate: rate_f64,
             created_by: created_by_str,
@@ -201,12 +313,14 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: OrderCancelledFilter,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         info!(
             "Processing EVM OrderCancelled: {:?}",
             hex::encode(event.order_id)
         );
-        let order_id = bytes16_to_hex(event.order_id);
+        let order_id = bytes16_to_uuid_string(event.order_id);
         let id_bson = mongodb::bson::to_bson(&order_id)?;
+        self.require_order(&order_id).await?;
 
         let updated = self
             .db
@@ -224,28 +338,31 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         Ok(())
     }
 
-    async fn handle_trade_settled(
+    async fn handle_trade_matched(
         &self,
-        event: TradeSettledFilter,
+        event: TradeMatchedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
-        let trade_hash = bytes16_to_hex(event.trade_id);
-        info!("Processing EVM TradeSettled: {:?}", trade_hash);
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
+        let trade_hash = bytes16_to_uuid_string(event.trade_id);
+        info!("Processing EVM TradeMatched: {:?}", trade_hash);
 
         let energy_f64 = event.energy.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
         let price_f64 = event.price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
 
-        let bid_hash_str = bytes16_to_hex(event.bid_id);
-        let offer_hash_str = bytes16_to_hex(event.offer_id);
-        let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
-        let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
-        // TradeSettled indexes match inclusion, not finality or Settlement market completion.
+        let bid_hash_str = bytes16_to_uuid_string(event.bid_id);
+        let offer_hash_str = bytes16_to_uuid_string(event.offer_id);
+        self.require_order(&bid_hash_str).await?;
+        self.require_order(&offer_hash_str).await?;
+        let residual_bid_id = bytes16_to_optional_uuid(event.residual_bid_id);
+        let residual_offer_id = bytes16_to_optional_uuid(event.residual_offer_id);
+        // TradeMatched indexes match inclusion, not finality or Settlement market completion.
         let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
             status: TradeStatus::Matched,
-            seller: bytes16_to_hex(event.seller_id),
-            buyer: bytes16_to_hex(event.buyer_id),
-            market_id: bytes16_to_hex(event.market_id),
+            seller: self.resolve_actor(event.seller_id).await?,
+            buyer: self.resolve_actor(event.buyer_id).await?,
+            market_id: bytes16_to_uuid_string(event.market_id),
             creation_time: block_timestamp,
             offer_hash: offer_hash_str,
             bid_hash: bid_hash_str,
@@ -260,7 +377,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         self.db
             .trades()
-            .record_settlement(trade.clone(), block_timestamp)
+            .record_match(trade.clone(), block_timestamp)
             .await
             .with_context(|| format!("Failed to index trade {} into DB", trade_hash))?;
 
@@ -274,7 +391,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 .await
                 .with_context(|| {
                     format!(
-                        "Failed to update order {} after settlement of trade {}",
+                        "Failed to update order {} after match of trade {}",
                         order_id, trade_hash
                     )
                 })?;
@@ -299,17 +416,22 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: PenaltyRecordedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
-        let trade_id = bytes16_to_hex(event.trade_id);
-        let actor_id = bytes16_to_hex(event.penalized_actor_id);
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
+        let trade_id = bytes16_to_uuid_string(event.trade_id);
+        let actor_id = self.resolve_actor(event.penalized_actor_id).await?;
         let trade = self
             .db
             .trades()
             .find_one(mongodb::bson::doc! {"trade_uuid": &trade_id})
             .await?
-            .with_context(|| format!("Penalty received before trade {} was indexed", trade_id))?;
+            .ok_or_else(|| {
+                UnresolvedEvent(format!(
+                    "Penalty received before trade {trade_id} was indexed"
+                ))
+            })?;
         anyhow::ensure!(
             event.penalty_energy > 0
-                && trade.market_id == bytes16_to_hex(event.market_id)
+                && trade.market_id == bytes16_to_uuid_string(event.market_id)
                 && (trade.buyer == actor_id || trade.seller == actor_id),
             "Penalty does not match trade {}",
             trade_id
@@ -332,19 +454,19 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: DeliveryVerifiedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
-        let trade_id = bytes16_to_hex(event.trade_id);
-        let bid_id = bytes16_to_hex(event.bid_id);
-        let offer_id = bytes16_to_hex(event.offer_id);
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
+        let trade_id = bytes16_to_uuid_string(event.trade_id);
+        let bid_id = bytes16_to_uuid_string(event.bid_id);
+        let offer_id = bytes16_to_uuid_string(event.offer_id);
         let trade = self
             .db
             .trades()
             .find_one(mongodb::bson::doc! {"trade_uuid": &trade_id})
             .await?
-            .with_context(|| {
-                format!(
-                    "Verification received before trade {} was indexed",
-                    trade_id
-                )
+            .ok_or_else(|| {
+                UnresolvedEvent(format!(
+                    "Verification received before trade {trade_id} was indexed"
+                ))
             })?;
         if trade.bid_hash != bid_id || trade.offer_hash != offer_id {
             return Err(anyhow!(
@@ -363,12 +485,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         // Check both orders before writing, so malformed or incomplete projections
         // cannot complete one side of a trade. Retrying partial DB writes is safe.
         for order_id in [&bid_id, &offer_id] {
-            let order = self
-                .db
-                .orders()
-                .get_order_by_id(&order_id.clone().into())
-                .await?
-                .with_context(|| format!("Missing consumed order {}", order_id))?;
+            let order = self.require_order(order_id).await?;
             anyhow::ensure!(
                 matches!(
                     order.status,
@@ -408,8 +525,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             hex::encode(event.market_id)
         );
 
+        let community = self.resolve_actor(event.community_id).await?;
+
         // Upsert by market_id so a replayed event is harmless.
-        let market = MarketSchema::try_from(MarketChainRecord {
+        let market = MarketChainRecord {
             market_id: event.market_id,
             community_id: event.community_id,
             opening_time: event.opening_time,
@@ -419,16 +538,18 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             market_type: event.market_type,
             matching_algorithm: event.matching_algorithm,
             created_at: event.created_at,
-        })?;
+        }
+        .into_schema(community)?;
         let market = self.db.markets().upsert(market).await?;
 
         info!("Market persisted.");
 
         // Publish only once the market is persisted.
         if let Some(publisher) = &self.event_publisher {
+            let created_at = market.created_at;
             let market = EwdsMarketDto::try_from(market)
                 .context("Failed to convert the market for its market.event")?;
-            publisher.publish_market_event(vec![market], event.created_at);
+            publisher.publish_market_event(vec![market], created_at);
         }
 
         Ok(())
@@ -440,6 +561,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         meta: LogMeta,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         info!(
             "Processing EVM MarketClearing: {:?}",
             hex::encode(event.market_id)
@@ -449,7 +571,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .ok_or_else(|| anyhow!("invalid clearing status byte: {}", event.clearing_status))?;
 
         let clearing_result = ClearingResultSchema {
-            market_id: bytes16_to_hex(event.market_id),
+            market_id: bytes16_to_uuid_string(event.market_id),
             clearing_status,
             no_bid_reason: None,
             clearing_price: scaled_u256_to_f64(event.clearing_price),
@@ -461,7 +583,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             clearing_time: block_timestamp,
         };
 
-        // A settlement transaction can emit several clearing logs, even for the same market.
+        // A submitMatches transaction can emit several clearing logs, even for the same market.
         self.db
             .clearing_results()
             .update_one(
@@ -486,10 +608,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
     }
 }
 
-fn bytes16_to_optional_hex(value: [u8; 16]) -> Option<String> {
+fn bytes16_to_optional_uuid(value: [u8; 16]) -> Option<String> {
     if value == [0u8; 16] {
         None
     } else {
-        Some(bytes16_to_hex(value))
+        Some(bytes16_to_uuid_string(value))
     }
 }

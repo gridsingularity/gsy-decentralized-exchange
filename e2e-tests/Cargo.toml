@@ -14,6 +14,7 @@ cucumber = "0.20"
 tokio = { workspace = true, features = ["full"] }
 reqwest = { workspace = true }
 anyhow = { workspace = true }
+chrono = { workspace = true }
 ethers = { workspace = true, features = ["ws", "rustls"] }
 primitives = { workspace = true }
 gsy-community-client = { workspace = true }

@@ -1,4 +1,5 @@
-use crate::helpers::{init_app, stop_app};
+use chrono::{DateTime, Utc};
+use crate::helpers::{init_app, stop_app, ts};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use primitives::certificates::{DeliveryScope, LocalOriginRecord};
 use primitives::db_api_schema::grid_topology::{
@@ -9,10 +10,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339, now_epoch_secs,
-    timestamp_to_string_with_padding, EPOCH_RFC3339,
-};
+use primitives::utils::bytes16_to_uuid_string;
 
 pub const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z
 /// When the seeded trades reached `Executed` (their `status_updated_at`).
@@ -23,11 +21,7 @@ const BUYER_FACILITY: &str = "goo-buyer";
 const BUYER_OWNER: &str = "goo-owner-buyer";
 const COMMUNITY: &str = "60060060-0000-4000-8000-000000000001";
 const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
-const MARKET: &str = "0xmarket";
-
-fn hash(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
-}
+const MARKET: &str = "60060060-0000-4000-8000-000000000001";
 
 /// A 2 kWh sale from the seller facility to the buyer facility at `SLOT`.
 pub fn trade(
@@ -38,10 +32,10 @@ pub fn trade(
     DbTradeSchema {
         trade_uuid: trade_uuid.to_string(),
         status,
-        seller: hash(SELLER_OWNER),
-        buyer: hash(BUYER_OWNER),
+        seller: SELLER_OWNER.to_owned(),
+        buyer: BUYER_OWNER.to_owned(),
         market_id: MARKET.to_string(),
-        creation_time: SLOT - 600,
+        creation_time: ts(SLOT - 600),
         offer_hash: format!("{trade_uuid}-offer"),
         bid_hash: format!("{trade_uuid}-bid"),
         residual_offer_id: None,
@@ -50,7 +44,7 @@ pub fn trade(
             selected_energy_kWh: 2.0,
             energy_rate: 0.2,
         },
-        status_updated_at,
+        status_updated_at: status_updated_at.map(ts),
     }
 }
 
@@ -61,13 +55,13 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
         .upsert(MarketSchema {
             market_id: MARKET.to_string(),
             community_id: COMMUNITY.to_string(),
-            opening_time: timestamp_to_string_with_padding(SLOT - 900),
-            closing_time: timestamp_to_string_with_padding(SLOT),
-            delivery_start_time: timestamp_to_string_with_padding(SLOT),
-            delivery_end_time: timestamp_to_string_with_padding(SLOT + 900),
+            opening_time: ts(SLOT - 900),
+            closing_time: ts(SLOT),
+            delivery_start_time: ts(SLOT),
+            delivery_end_time: ts(SLOT + 900),
             market_type: MarketType::Spot,
             matching_algorithm: MatchingAlgorithm::PayAsBid,
-            created_at: timestamp_to_string_with_padding(SLOT - 900),
+            created_at: ts(SLOT - 900),
         })
         .await
         .unwrap();
@@ -81,7 +75,7 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
                 facility_name: format!("{facility_id}-name"),
                 site_id: "goo-site".to_string(),
                 owner_id: owner_id.to_string(),
-                valid_from: EPOCH_RFC3339.to_string(),
+                valid_from: DateTime::UNIX_EPOCH,
                 valid_until: None,
             })
             .await
@@ -92,7 +86,7 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
             community_id: COMMUNITY.to_string(),
             community_name: "GoO Community".to_string(),
             sites: vec!["goo-site".to_string()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         })
         .await
@@ -138,7 +132,7 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
     db.timeseries()
         .insert_values(vec![TimeseriesSchema {
             measurement_point: EXPORT_POINT.to_string(),
-            timestamp: timestamp_to_string_with_padding(SLOT),
+            timestamp: ts(SLOT),
             value: export_kwh,
         }])
         .await
@@ -185,7 +179,7 @@ async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     // [100, 200), any status.
     let all = db
         .trades()
-        .filter_trades_by_status_change(100, Some(200), None)
+        .filter_trades_by_status_change(ts(100), Some(ts(200)), None)
         .await
         .unwrap();
     assert_eq!(sorted_uuids(all), vec!["t-100", "t-150"]);
@@ -193,7 +187,7 @@ async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     // Restricted to Executed.
     let executed = db
         .trades()
-        .filter_trades_by_status_change(100, Some(200), Some(TradeStatus::Executed))
+        .filter_trades_by_status_change(ts(100), Some(ts(200)), Some(TradeStatus::Executed))
         .await
         .unwrap();
     assert_eq!(sorted_uuids(executed), vec!["t-100"]);
@@ -201,7 +195,7 @@ async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     // The next back-to-back window picks up the boundary trade, and only once.
     let next = db
         .trades()
-        .filter_trades_by_status_change(200, Some(300), None)
+        .filter_trades_by_status_change(ts(200), Some(ts(300)), None)
         .await
         .unwrap();
     assert_eq!(sorted_uuids(next), vec!["t-200", "t-201"]);
@@ -209,7 +203,7 @@ async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     // Open-ended upper bound.
     let open = db
         .trades()
-        .filter_trades_by_status_change(150, None, None)
+        .filter_trades_by_status_change(ts(150), None, None)
         .await
         .unwrap();
     assert_eq!(sorted_uuids(open), vec!["t-150", "t-200", "t-201"]);
@@ -233,14 +227,18 @@ async fn filter_trades_by_status_change_excludes_trades_without_a_verdict() {
     // Even the widest window never matches a trade without `status_updated_at`.
     let all = db
         .trades()
-        .filter_trades_by_status_change(0, None, None)
+        .filter_trades_by_status_change(ts(0), None, None)
         .await
         .unwrap();
     assert_eq!(sorted_uuids(all), vec!["t-verdict"]);
 
     let executed = db
         .trades()
-        .filter_trades_by_status_change(0, Some(u64::MAX >> 1), Some(TradeStatus::Executed))
+        .filter_trades_by_status_change(
+            ts(0),
+            Some(chrono::DateTime::<chrono::Utc>::MAX_UTC),
+            Some(TradeStatus::Executed),
+        )
         .await
         .unwrap();
     assert_eq!(sorted_uuids(executed), vec!["t-verdict"]);
@@ -257,6 +255,111 @@ async fn get_goo(address: &str, query: &[(&str, String)]) -> reqwest::Response {
         .send()
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn certificates_join_exact_facilities_keyed_mappings_and_meter_references() {
+    use mongodb::bson::doc;
+    use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
+    use primitives::utils::derive_onchain_id;
+
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+    seed_topology(db, 3.0).await;
+    let seller = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let owner = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    db.facilities()
+        .delete_one(doc! {"facility_id": SELLER_FACILITY})
+        .await
+        .unwrap();
+    let http = reqwest::Client::new();
+    for (id, name, owner_id) in [
+        (seller.to_uppercase(), SELLER_FACILITY, owner.to_uppercase()),
+        (
+            BUYER_FACILITY.to_string(),
+            BUYER_FACILITY,
+            BUYER_OWNER.to_string(),
+        ),
+    ] {
+        let response = http
+            .post(format!("{}/facilities", app.address))
+            .json(&primitives::ewds::dto::EwdsFacilityDto::from(FacilitySchema {
+                valid_from: DateTime::UNIX_EPOCH,
+                valid_until: None,
+                facility_id: id,
+                facility_name: format!("{name}-name"),
+                site_id: "goo-site".into(),
+                owner_id,
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+    }
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Http,
+        app.address.clone(),
+        "UNUSED",
+        "unused",
+    );
+    let party = client
+        .fetch_onchain_id(&owner.to_uppercase())
+        .await
+        .unwrap();
+    assert_eq!(party, derive_onchain_id(&owner.to_uppercase()));
+    let mut point = db
+        .measurement_points()
+        .find_one(doc! {"measurement_id": EXPORT_POINT})
+        .await
+        .unwrap()
+        .unwrap();
+    point.asset_name = seller.to_uppercase();
+    assert_eq!(
+        http.post(format!("{}/measurement-points", app.address))
+            .json(&vec![point])
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        200
+    );
+    let id = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab));
+    let mut sale = trade(&id, TradeStatus::Matched, None);
+    sale.seller = owner.to_uppercase();
+    sale.bid_hash = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xbc));
+    sale.offer_hash = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xcd));
+    let mut imported = primitives::ewds::dto::EwdsTradeDto::from(sale);
+    imported.trade_id = uuid::Uuid::from_bytes(crate::helpers::entity_bytes(0xab))
+        .to_string()
+        .to_uppercase();
+    assert_eq!(
+        http.post(format!("{}/trades", app.address))
+            .json(&vec![imported])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    // Imports do not invent a verification timestamp; the lifecycle supplies it.
+    db.trades().mark_executed(&id, ts(VERDICT_AT)).await.unwrap();
+    let response = get_goo(
+        &app.address,
+        &[
+            ("start_time", VERDICT_AT.to_string()),
+            ("end_time", (VERDICT_AT + 1).to_string()),
+        ],
+    )
+    .await;
+    assert_eq!(response.status().as_u16(), 200);
+    let records: Vec<LocalOriginRecord> = response.json().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].beneficiary_and_claim.owner_id,
+        owner.to_uppercase()
+    );
+    stop_app(app).await;
 }
 
 #[tokio::test]
@@ -352,11 +455,11 @@ async fn certificates_use_the_latest_facilities_and_communities() {
         ("start_time", (VERDICT_AT - 450).to_string()),
         ("end_time", (VERDICT_AT + 450).to_string()),
     ];
-    let community = |valid_until: Option<String>| EnergyCommunitySchema {
+    let community = |valid_until: Option<DateTime<Utc>>| EnergyCommunitySchema {
         community_id: COMMUNITY.to_string(),
         community_name: "GoO Community".to_string(),
         sites: vec!["goo-site".to_string(), "goo-site-2".to_string()],
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until,
     };
 
@@ -367,7 +470,7 @@ async fn certificates_use_the_latest_facilities_and_communities() {
             facility_name: format!("{SELLER_FACILITY}-name"),
             site_id: "goo-site-2".to_string(),
             owner_id: SELLER_OWNER.to_string(),
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         }])
         .await
@@ -383,9 +486,8 @@ async fn certificates_use_the_latest_facilities_and_communities() {
     );
 
     // Once the community is deleted, the certificate names no community.
-    let now = epoch_to_rfc3339(now_epoch_secs());
     db.communities()
-        .store(vec![community(Some(now))])
+        .store(vec![community(Some(Utc::now()))])
         .await
         .unwrap();
     let records: Vec<LocalOriginRecord> =
@@ -431,7 +533,7 @@ async fn rest_allocation_counts_executed_sales_outside_the_window() {
         TradeStatus::Executed,
         Some(VERDICT_AT - 3_600),
     );
-    earlier.creation_time = SLOT - 900;
+    earlier.creation_time = ts(SLOT - 900);
     let later = trade("goo-later", TradeStatus::Executed, Some(VERDICT_AT));
     app.db_wrapper
         .trades()

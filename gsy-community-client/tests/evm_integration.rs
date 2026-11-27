@@ -7,10 +7,10 @@ use ethers::{prelude::*, utils::Anvil};
 use gsy_community_client::node_connector::orders::publish_orders;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::utils::{epoch_to_datetime, hex_to_bytes16, uuid_v4_to_bytes16};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::sync::Arc;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 abigen!(
@@ -35,15 +35,15 @@ async fn setup_facilities_mock() -> MockServer {
 
 fn test_market() -> MarketSchema {
     MarketSchema {
-        market_id: format!("0x{}", "11".repeat(16)),
+        market_id: "11111111-1111-4111-8111-111111111111".to_string(),
         community_id: "community-1".to_string(),
-        opening_time: "00000000002700000000".to_string(),
-        closing_time: "00000000002800000000".to_string(),
-        delivery_start_time: "00000000001700000000".to_string(),
-        delivery_end_time: "00000000001800000000".to_string(),
+        opening_time: epoch_to_datetime(2_700_000_000).unwrap(),
+        closing_time: epoch_to_datetime(2_800_000_000).unwrap(),
+        delivery_start_time: epoch_to_datetime(1_700_000_000).unwrap(),
+        delivery_end_time: epoch_to_datetime(1_800_000_000).unwrap(),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: "00000000001699999000".to_string(),
+        created_at: epoch_to_datetime(1_699_999_000).unwrap(),
     }
 }
 
@@ -52,16 +52,16 @@ fn test_forecasts() -> Vec<ForecastSchema> {
         ForecastSchema {
             facility_id: "area-a".to_string(),
             community_uuid: "community-1".to_string(),
-            time_slot: 1_700_000_000,
-            creation_time: 1_699_999_000,
+            time_slot: epoch_to_datetime(1_700_000_000).unwrap(),
+            creation_time: epoch_to_datetime(1_699_999_000).unwrap(),
             energy_kwh: 12.0,
             confidence: 0.9,
         },
         ForecastSchema {
             facility_id: "area-b".to_string(),
             community_uuid: "community-1".to_string(),
-            time_slot: 1_700_000_000,
-            creation_time: 1_699_999_000,
+            time_slot: epoch_to_datetime(1_700_000_000).unwrap(),
+            creation_time: epoch_to_datetime(1_699_999_000).unwrap(),
             energy_kwh: -3.0,
             confidence: 0.7,
         },
@@ -126,27 +126,26 @@ async fn test_publish_orders_calls_evm_order_registry() {
         compile_and_deploy_contract(client.clone(), source, "MockOrderRegistry").await;
     let mock_contract = MockOrderRegistry::new(contract_address, client.clone());
 
-    // Validation or ID-service failures must abort preparation before the first transaction.
-    for endpoint in ["/facilities/validate", "/ids"] {
-        let mut failure = Mock::given(method("POST")).and(path(endpoint));
-        if endpoint == "/ids" {
-            failure = failure.and(query_param("offchain_id", "owner-2"));
-        }
-        failure
+    // Topology or validation failures must abort preparation before the first transaction.
+    for (verb, endpoint) in [("GET", "/facilities"), ("POST", "/facilities/validate")] {
+        Mock::given(method(verb))
+            .and(path(endpoint))
             .respond_with(ResponseTemplate::new(500))
             .with_priority(1)
             .up_to_n_times(1)
             .mount(&facilities_server)
             .await;
-        assert!(publish_orders(
-            ws_endpoint.clone(),
-            test_forecasts(),
-            test_market(),
-            format!("{:?}", contract_address),
-            TEST_PRIVATE_KEY.to_string(),
-        )
-        .await
-        .is_err());
+        assert!(
+            publish_orders(
+                ws_endpoint.clone(),
+                test_forecasts(),
+                test_market(),
+                format!("{:?}", contract_address),
+                TEST_PRIVATE_KEY.to_string(),
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(
             mock_contract.placed_count().call().await.unwrap(),
             U256::zero()
@@ -176,11 +175,11 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(facilities::OWNER_2_ONCHAIN).unwrap()
+        hex_to_bytes16(&primitives::utils::derive_onchain_id("owner-2")).unwrap()
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16("0x11111111111111111111111111111111")
+        uuid_v4_to_bytes16("11111111-1111-4111-8111-111111111111")
             .expect("failed to parse uuid")
     );
     assert_eq!(
@@ -210,7 +209,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         0
     );
 
-    // A later cross-community denial must not submit another order, even with an ID mapping.
+    // A later cross-community denial must not submit another order for a registered owner.
     Mock::given(method("POST"))
         .and(path("/facilities/validate"))
         .respond_with(|request: &Request| {
@@ -248,7 +247,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         .await
         .unwrap()
         .iter()
-        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate" | "/ids")));
+        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate")));
 }
 
 #[tokio::test]
@@ -266,10 +265,11 @@ async fn test_publish_orders_returns_error_for_invalid_contract_address() {
     .await
     .unwrap_err();
 
-    assert!(err
-        .to_string()
-        .to_lowercase()
-        .contains("invalid order registry address"));
+    assert!(
+        err.to_string()
+            .to_lowercase()
+            .contains("invalid order registry address")
+    );
 }
 
 #[tokio::test]

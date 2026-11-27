@@ -3,10 +3,11 @@
 //! deterministic ordering around the pure builder.
 
 use anyhow::Result;
+use chrono::TimeDelta;
 use primitives::certificates::LocalOriginRecord;
 use primitives::db_api_schema::profiles::MeasurementPointType;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
-use primitives::utils::{string_to_timestamp, timestamp_to_string_with_padding};
+use primitives::utils::epoch_to_datetime;
 
 use crate::certificates::builder::{
     build_local_origin_records_with_allocation, sort_records, CertificateInputs,
@@ -71,8 +72,8 @@ pub async fn guarantees_of_origin(
     let trades = db
         .trades()
         .filter_trades_by_status_change(
-            window.start_time,
-            Some(window.end_time),
+            epoch_to_datetime(window.start_time)?,
+            Some(epoch_to_datetime(window.end_time)?),
             Some(TradeStatus::Executed),
         )
         .await?;
@@ -86,10 +87,10 @@ pub async fn guarantees_of_origin(
     let selected_markets = db.markets().get_by_ids(market_ids(&trades)).await?;
     let Some((earliest_slot, latest_slot)) = selected_markets
         .iter()
-        .filter_map(|market| string_to_timestamp(market.delivery_start_time.trim()).ok())
+        .map(|market| market.delivery_start_time)
         .fold(None, |bounds, slot| match bounds {
             None => Some((slot, slot)),
-            Some((min, max)) => Some((u64::min(min, slot), u64::max(max, slot))),
+            Some((min, max)) => Some((min.min(slot), max.max(slot))),
         })
     else {
         return Ok(Vec::new());
@@ -101,7 +102,11 @@ pub async fn guarantees_of_origin(
     // unbounded, since a superset is always correct here.
     let slot_executed = db
         .trades()
-        .filter_trades(None, Some(earliest_slot), latest_slot.checked_add(1))
+        .filter_trades(
+            None,
+            Some(earliest_slot),
+            latest_slot.checked_add_signed(TimeDelta::seconds(1)),
+        )
         .await?
         .into_iter()
         .filter(|trade| trade.status == TradeStatus::Executed)
@@ -117,11 +122,7 @@ pub async fn guarantees_of_origin(
         .await?;
     let timeseries = db
         .timeseries()
-        .filter_values(
-            None,
-            Some(timestamp_to_string_with_padding(earliest_slot)),
-            Some(timestamp_to_string_with_padding(latest_slot)),
-        )
+        .filter_values(None, Some(earliest_slot), Some(latest_slot))
         .await?;
 
     let inputs = CertificateInputs {

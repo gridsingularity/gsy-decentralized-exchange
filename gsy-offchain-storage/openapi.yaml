@@ -14,13 +14,19 @@ info:
       * §5.4 Order Book Storage
 
     `POST /orders` and `POST /orders-normalized` accept the same EWDS JSON
-    order payload and directly upsert database records. They are not used by
+    order payload and insert new database records without replacing existing IDs. They are not used by
     the E2E scenarios or production order lifecycle, which submits orders
     on-chain and indexes the resulting events. Their access policy remains
     to be clarified. Trade insertion endpoints do not update referenced orders.
-    Legacy order/trade imports must supply lowercase 0x-prefixed 16-byte market
-    IDs. The write routes do not normalize them; normalized queries will not
-    match non-canonical stored IDs.
+    Order imports normalize UUIDv4 order and market IDs
+    to lowercase UUID text. createdBy is the original off-chain owner ID. Invalid IDs return 400; duplicate
+    IDs in the batch or storage return 409. Batches are not transactional under
+    concurrent writes. Listener events remain authoritative and can replace imports.
+    Trade imports normalize entity IDs by the same UUIDv4 rule and preserve off-chain parties;
+    optional residual IDs must be null or UUIDv4. They reject invalid IDs with 400 and
+    duplicate canonical trade IDs with 409, without updating orders or emitting events.
+    Reads of known-incomplete chain projections return 500 while unresolved actor
+    mappings or prerequisite events are pending, never a partial book or trade set.
   license:
     name: GPL-3.0-or-later
 servers:
@@ -51,7 +57,12 @@ paths:
   /orders-normalized:
     post:
       tags: [Order Book]
-      summary: Insert orders using the DEX-side normalized schema.
+      summary: Import new orders without replacing existing records.
+      description: |
+        Alias of POST /orders. Uses original off-chain owner IDs in
+        createdBy; does not submit on-chain. Preferred partners
+        remain off-chain IDs. Validation and known-conflict checks precede writes,
+        but batches are not transactional. New records retain caller-supplied statuses.
       requestBody:
         required: true
         content:
@@ -67,10 +78,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InsertedIds"
+        "400":
+          description: Invalid order payload or identifier.
+        "409":
+          description: Duplicate canonical order ID in the batch or existing storage.
         "500":
           $ref: "#/components/responses/InternalError"
 
   /orders:
+    post:
+      tags: [Order Book]
+      summary: Import new orders without replacing existing records.
+      requestBody:
+        $ref: "#/paths/~1orders-normalized/post/requestBody"
+      responses:
+        "200":
+          $ref: "#/paths/~1orders-normalized/post/responses/200"
+        "400":
+          $ref: "#/paths/~1orders-normalized/post/responses/400"
+        "409":
+          $ref: "#/paths/~1orders-normalized/post/responses/409"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       tags: [Order Book]
       summary: List orders, optionally filtered by market and time window.
@@ -168,6 +197,8 @@ paths:
       summary: Import trades (alias of POST /trades).
       description: |
         Imports are insert-only and do not update orders or publish lifecycle notifications.
+        IDs accept hyphenated UUIDv4 in either letter case and are stored as lowercase UUID text. All input is
+        validated before writes; known duplicates return 409. Concurrent batches are not transactional.
       requestBody:
         required: true
         content:
@@ -187,6 +218,8 @@ paths:
           $ref: "#/components/responses/InternalError"
         "400":
           description: Invalid trade payload or unsupported trade status.
+        "409":
+          description: Duplicate canonical trade ID in the batch or existing storage.
 
   /trades:
     post:
@@ -194,6 +227,8 @@ paths:
       summary: Import trades using EWDS JSON.
       description: |
         Imports are insert-only and do not update orders or publish lifecycle notifications.
+        IDs accept hyphenated UUIDv4 in either letter case and are stored as lowercase UUID text. All input is
+        validated before writes; known duplicates return 409. Concurrent batches are not transactional.
       requestBody:
         required: true
         content:
@@ -211,6 +246,8 @@ paths:
                 $ref: "#/components/schemas/InsertedIds"
         "400":
           description: Invalid trade payload or unsupported trade status.
+        "409":
+          description: Duplicate canonical trade ID in the batch or existing storage.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -223,7 +260,7 @@ paths:
       parameters:
         - in: query
           name: market_id
-          description: Market ID as UUID or 0x-prefixed 16-byte hex.
+          description: Hyphenated UUIDv4 market ID in either letter case; no surrounding whitespace.
           schema: { type: string }
         - { $ref: "#/components/parameters/StartTimeQuery" }
         - { $ref: "#/components/parameters/EndTimeQuery" }
@@ -242,9 +279,33 @@ paths:
           description: Missing or invalid query range.
 
   /market:
+    get:
+      tags: [Trades & Market]
+      summary: Look up a market by ID.
+      parameters:
+        - in: query
+          name: market_id
+          required: true
+          description: Hyphenated UUIDv4 in either letter case; no surrounding whitespace.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Market matching the given ID, with a lowercase UUIDv4 market_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketSchema"
+        "400":
+          description: Invalid or nil market ID.
+        "404":
+          description: No matching market.
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /markets:
     post:
       tags: [Trades & Market]
-      summary: Persist a market opening.
+      summary: Create or update a market by its canonical ID.
       requestBody:
         required: true
         content:
@@ -253,55 +314,40 @@ paths:
               $ref: "#/components/schemas/MarketSchema"
       responses:
         "200":
-          description: Saved market.
+          description: Saved market with a canonical market ID and the exact off-chain community ID.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MarketSchema"
+        "400":
+          description: Invalid or nil market ID, or empty or padded community ID.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
       tags: [Trades & Market]
-      summary: Look up a market by ID.
+      summary: List markets by market ID, community ID or opening time.
       parameters:
-        - in: query
-          name: market_id
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: Markets matching the given ID.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/MarketSchema"
-        "404":
-          description: No matching market.
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /community-market:
-    get:
-      tags: [Trades & Market]
-      summary: Look up markets opened for a given community.
-      parameters:
+        - { $ref: "#/components/parameters/MarketIdQuery" }
         - in: query
           name: community_id
-          required: true
+          required: false
+          description: Nonempty, unpadded opaque off-chain community ID; exact and case-sensitive.
           schema: { type: string }
         - { $ref: "#/components/parameters/StartTimeQuery" }
         - { $ref: "#/components/parameters/EndTimeQuery" }
       responses:
         "200":
-          description: Markets for the community.
+          description: Matching markets with canonical market IDs and exact off-chain community IDs.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: "#/components/schemas/MarketSchema"
+        "400":
+          description: Invalid or nil market ID, or empty or padded community ID.
+        "404":
+          description: No matching markets.
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -309,6 +355,7 @@ paths:
     post:
       tags: [Trades & Market]
       summary: Persist a clearing result for a market.
+      description: Accepts hyphenated UUIDv4 marketId in either letter case and normalizes it to lowercase UUID text.
       requestBody:
         required: true
         content:
@@ -322,6 +369,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EwdsClearingResultDto"
+        "400":
+          description: Invalid clearing result or malformed/nil market ID.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -331,7 +380,7 @@ paths:
         - in: query
           name: market_id
           required: true
-          description: Market ID as UUID or 0x-prefixed 16-byte hex.
+          description: Hyphenated UUIDv4 market ID in either letter case; no surrounding whitespace.
           schema: { type: string }
       responses:
         "200":
@@ -385,6 +434,7 @@ paths:
     post:
       tags: [Measurements]
       summary: Register measurement / forecast points.
+      description: Facility references in asset_name and client-supplied measurement_id values are preserved exactly. datasource_name is generic metadata, not a validated actor ID; all labels (including empty, padded and UUID-shaped strings) and missing values are preserved exactly.
       requestBody:
         required: true
         content:
@@ -601,8 +651,10 @@ paths:
   /communities:
     post:
       tags: [Grid Topology]
-      summary: Store a version of a energy community.
+      summary: Store a version of an energy community.
       description: |
+        Actor IDs are nonempty, unpadded, case-sensitive strings, including UUID-shaped strings.
+        Registers the community mapping before writing; mapping failures prevent ingestion.
         Stores the energy community as a new version, unless it equals the latest version of its
         `communityId` apart from `validFrom`. Older versions are kept for audit only.
         `validFrom` is set to the time the request arrives; a value sent is ignored.
@@ -624,7 +676,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/EwdsCommunityDto"
         "400":
-          description: An invalid body, `validFrom` or `validUntil`.
+          description: Invalid body, actor ID, site reference, `validFrom` or `validUntil`.
         "409":
           description: A valid energy community with another `communityId` already uses `communityName`.
         "500":
@@ -651,6 +703,8 @@ paths:
       tags: [Grid Topology]
       summary: Store a version of a site.
       description: |
+        Site IDs and facility references are exact, nonempty, unpadded actor IDs. Identical references
+        are deduplicated. Registers the site ID mapping before writing; names are unchanged.
         Stores the site as a new version, unless it equals the latest version of its
         `site_id` apart from `valid_from`. Older versions are kept for audit only.
         `valid_from` is set to the time the request arrives; a value sent is ignored.
@@ -674,7 +728,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/EwdsSiteDto"
         "400":
-          description: An invalid body, `valid_from` or `valid_until`.
+          description: Invalid body, actor ID, reference, `valid_from` or `valid_until`.
         "409":
           description: A valid site with another `site_id` already uses `site_name`.
         "500":
@@ -701,6 +755,8 @@ paths:
       tags: [Grid Topology]
       summary: Store a version of a facility.
       description: |
+        Facility, owner and site IDs are exact, nonempty, unpadded actor IDs. Registers facility and
+        owner mappings before writing; mapping failures prevent ingestion.
         Stores the facility as a new version, unless it equals the latest version of its
         `facility_id` apart from `valid_from`. Older versions are kept for audit only.
         `valid_from` is set to the time the request arrives; a value sent is ignored.
@@ -721,7 +777,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/EwdsFacilityDto"
         "400":
-          description: An invalid body, `valid_from` or `valid_until`.
+          description: Invalid body, actor ID, reference, `valid_from` or `valid_until`.
         "409":
           description: A valid facility with another `facility_id` already uses `facility_name`.
         "500":
@@ -743,6 +799,120 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /ids:
+    post:
+      tags: [Grid Topology]
+      summary: Get or create an off-chain to on-chain identity mapping.
+      description: |
+        Nonempty, unpadded actor IDs are preserved exactly, including UUID-shaped
+        and hex-shaped strings. On-chain IDs use keyed Blake2b-16 with the shared
+        ACTOR_ID_HASH_KEY. A mapping does not establish facility existence or eligibility.
+      parameters:
+        - in: query
+          name: offchain_id
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Canonical off-chain identity and its bytes16 hash.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [offchain_id, onchain_id, creation_time]
+                properties:
+                  offchain_id: { type: string }
+                  onchain_id: { type: string, pattern: '^0x[0-9a-f]{32}$' }
+                  creation_time: { type: integer, format: uint64 }
+        "400": { description: Empty or whitespace-padded identity. }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /measurements:
+    post:
+      tags: [Measurements]
+      summary: Upsert measurement profiles and their values.
+      description: |
+        Facility and community identities are nonempty, unpadded opaque strings,
+        preserved exactly and case-sensitive, including UUID-like spellings.
+        The whole payload is validated before writing; writes are not transactional.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "#/components/schemas/MeasurementProfile" }
+      responses:
+        "200":
+          description: Written timeseries IDs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InsertedIds" }
+        "400": { description: Invalid profile or identifier. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      tags: [Measurements]
+      summary: Read measurement profiles using exact identity filters.
+      description: |
+        Filters combine. Aliases facilityId/areaUuid, communityUuid, startTime and
+        endTime are supported; send only one spelling per field. Stored points
+        without datasource metadata return an empty community_uuid.
+      parameters:
+        - { in: query, name: facility_id, schema: { type: string } }
+        - { in: query, name: community_uuid, schema: { type: string }, description: "Nonempty, unpadded opaque community ID; exact and case-sensitive." }
+        - { in: query, name: start_time, schema: { type: string, format: date-time } }
+        - { in: query, name: end_time, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Matching measurements; creation_time is reconstructed from the timeseries timestamp.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MeasurementProfile" }
+        "400": { description: Invalid filter or time range. }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /forecasts:
+    post:
+      tags: [Measurements]
+      summary: Upsert forecast profiles and their values.
+      description: Uses the same identifier validation and non-transactional write behavior as POST /measurements.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "#/components/schemas/ForecastProfile" }
+      responses:
+        "200":
+          description: Written timeseries IDs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InsertedIds" }
+        "400": { description: Invalid profile or identifier. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      tags: [Measurements]
+      summary: Read forecast profiles using exact identity filters.
+      description: Same filters and aliases as GET /measurements; reconstructed confidence is 1.0.
+      parameters:
+        - { in: query, name: facility_id, schema: { type: string } }
+        - { in: query, name: community_uuid, schema: { type: string }, description: "Nonempty, unpadded opaque community ID; exact and case-sensitive." }
+        - { in: query, name: start_time, schema: { type: string, format: date-time } }
+        - { in: query, name: end_time, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Matching forecasts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ForecastProfile" }
+        "400": { description: Invalid filter or time range. }
+        "500": { $ref: "#/components/responses/InternalError" }
+
   /facilities/validate:
     post:
       tags: [Grid Topology]
@@ -753,6 +923,9 @@ paths:
         Uses the latest version of each facility, site and community; deleted
         ones count as unknown. An ID mapping alone does not establish eligibility. Does not check
         the market's opening/closing times or contract authorization.
+        Facility and community identities match exactly, including case; each result echoes its
+        requested identifiers exactly. Invalid facility identities return
+        unknown_facility for that pair rather than failing the batch.
       requestBody:
         required: true
         content:
@@ -789,7 +962,7 @@ components:
       in: query
       name: market_id
       required: false
-      description: Market ID as UUID or 0x-prefixed 16-byte hex for order queries.
+      description: Hyphenated UUIDv4 market ID in either letter case; no surrounding whitespace.
       schema: { type: string }
     StartTimeQuery:
       in: query
@@ -816,7 +989,7 @@ components:
           description: Original off-chain facility ID, not its owner or on-chain mapping.
         market_id:
           type: string
-          description: Market ID as UUID or bytes16 hex, with or without the 0x prefix.
+          description: Hyphenated UUIDv4 market ID.
 
     FacilityMarketValidationResult:
       type: object
@@ -875,11 +1048,11 @@ components:
         - createdBy
         - creationTime
       properties:
-        orderId: { type: string }
-        marketId: { type: string }
+        orderId: { type: string, description: "Hyphenated UUIDv4; stored and returned as lowercase UUID text." }
+        marketId: { type: string, description: "Hyphenated UUIDv4; stored and returned as lowercase UUID text." }
         orderType: { $ref: "#/components/schemas/OrderType" }
         orderStatus: { $ref: "#/components/schemas/OrderStatus" }
-        timeSlot: { type: integer, format: int64, minimum: 0 }
+        timeSlot: { type: string, format: date-time }
         quantity: { type: number, format: double }
         priceLimit: { type: number, format: double }
         energySourcePreference:
@@ -888,12 +1061,11 @@ components:
         energyType:
           $ref: "#/components/schemas/EnergyType"
           nullable: true
-        createdBy: { type: string }
-        creationTime: { type: integer, format: int64, minimum: 0 }
+        createdBy: { type: string, description: "Original off-chain owner ID, not a facility ID, hash or wallet. Nonempty, unpadded strings are preserved exactly and remain case-sensitive in imports, queries and lifecycle notifications." }
+        creationTime: { type: string, format: date-time }
         updatedAt:
-          type: integer
-          format: int64
-          minimum: 0
+          type: string
+          format: date-time
           nullable: true
         rejectReason:
           type: string
@@ -901,7 +1073,7 @@ components:
         preferredTradingPartner:
           type: string
           nullable: true
-          description: Bid requirement or offer attribute, depending on orderType.
+          description: Optional registered off-chain preferred owner identity for bids and offers. Must be nonempty and unpadded; all actor IDs remain case-sensitive, including UUID-shaped strings.
         preferredEnergyRate:
           type: number
           format: double
@@ -974,11 +1146,32 @@ components:
         penalized: a delivery penalty was recorded; this status is terminal.
       enum: [matched, executed, settled, penalized]
 
+    MeasurementProfile:
+      type: object
+      required: [facility_id, community_uuid, time_slot, creation_time, energy_kwh]
+      properties:
+        facility_id: { type: string, description: Canonical off-chain facility identity. }
+        community_uuid: { type: string, description: "Nonempty, unpadded opaque actor ID on typed-profile ingress; preserved exactly and case-sensitive. Direct measurement points may carry arbitrary datasource labels or no metadata." }
+        time_slot: { type: integer, format: uint64, description: Unix seconds. }
+        creation_time: { type: integer, format: uint64, description: Unix seconds. }
+        energy_kwh: { type: number, format: double }
+
+    ForecastProfile:
+      allOf:
+        - { $ref: "#/components/schemas/MeasurementProfile" }
+        - type: object
+          required: [confidence]
+          properties:
+            confidence: { type: number, format: double }
+
     EwdsTradeDto:
       description: |
         EWDS-side trade DTO. Field names are camelCase on the wire.
         `timestamp` is the RFC 3339 creation time, unchanged by lifecycle updates.
         Trade notifications carry the status-change time in the envelope's `occurredAt`.
+        Entity IDs accept hyphenated UUIDv4 in either letter case on import; reads and events
+        use lowercase UUID text. buyerId/sellerId are original off-chain owner IDs,
+        preserved exactly and case-sensitive, not on-chain hashes or wallets. Optional residual IDs use null for absence; other values follow the same UUIDv4 rule.
       type: object
       required:
         - tradeId
@@ -1079,8 +1272,12 @@ components:
         - delivery_end_time
         - market_type
       properties:
-        market_id: { type: string }
-        community_id: { type: string }
+        market_id:
+          type: string
+          description: Hyphenated UUIDv4 in either letter case on input; lowercase UUID text on output.
+        community_id:
+          type: string
+          description: Nonempty, unpadded opaque off-chain community ID, preserved exactly. Chain events resolve the keyed community hash through a registered ID mapping; a missing mapping fails ingestion for retry instead of storing the hash as a UUID.
         opening_time: { type: string }
         closing_time: { type: string }
         delivery_start_time: { type: string }
@@ -1120,6 +1317,7 @@ components:
         datasource_name:
           type: string
           nullable: true
+          description: Generic datasource label, preserved exactly without actor-ID validation, including empty, padded or UUID-shaped strings. Absent metadata remains readable without a community filter.
 
     TimeseriesSchema:
       type: object
@@ -1220,7 +1418,9 @@ components:
       type: object
       required: [communityId, communityName, sites]
       properties:
-        communityId: { type: string, format: uuid }
+        communityId:
+          type: string
+          description: Exact nonempty, unpadded, case-sensitive off-chain community ID, including UUID-shaped strings.
         communityName: { type: string }
         sites:
           type: array
@@ -1230,6 +1430,7 @@ components:
 
     EwdsSiteDto:
       type: object
+      description: Site IDs and facility references are exact nonempty, unpadded actor identities. Identical facility references are deduplicated. Names are not identifiers.
       required: [site_id, site_name, site_description, facilities]
       properties:
         site_id: { type: string }
@@ -1243,6 +1444,7 @@ components:
 
     EwdsFacilityDto:
       type: object
+      description: Nonempty, unpadded facility and owner IDs are preserved exactly and remain case-sensitive, including UUID-shaped, bare or 0x hex strings. Site IDs follow the same actor-ID rule; names are unchanged.
       required:
         - facility_id
         - facility_name
@@ -1328,7 +1530,7 @@ components:
           properties:
             consumption_asset_id:
               type: string
-              description: Buyer facility id, else buyer community id, else the raw buyer hash.
+              description: Buyer facility id, else buyer community id, else the original off-chain buyer ID.
             asset_registry_reference: { type: [string, "null"] }
             metering_point_id: { type: [string, "null"] }
             asset_class: { $ref: "#/components/schemas/GooAssetClass" }
@@ -1365,7 +1567,7 @@ components:
         beneficiary_and_claim:
           type: object
           properties:
-            owner_id: { type: string, description: Seller party hash. }
+            owner_id: { type: string, description: Original off-chain seller owner ID. }
             consumption_metering_point_id:
               type: [string, "null"]
               description: Buyer facility id; null when the buyer is not a facility.

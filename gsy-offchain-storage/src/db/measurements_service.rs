@@ -1,28 +1,17 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::{self, doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::profile_measurement_id;
 use std::collections::HashMap;
 use std::ops::Deref;
-
-pub(crate) fn profile_measurement_id(
-    point_type: MeasurementPointType,
-    community_uuid: &str,
-    facility_id: &str,
-) -> String {
-    let prefix = match point_type {
-        MeasurementPointType::Measurement => "measurement",
-        MeasurementPointType::Forecast => "forecast",
-    };
-    format!("{prefix}:{community_uuid}:{facility_id}")
-}
 
 pub(crate) fn flow_direction(value: f64) -> FlowDirection {
     if value >= 0.0 {
@@ -58,7 +47,7 @@ fn measurement_timeseries(measurement: &MeasurementSchema) -> TimeseriesSchema {
             measurement.community_uuid.as_str(),
             measurement.facility_id.as_str(),
         ),
-        timestamp: timestamp_to_string_with_padding(measurement.time_slot),
+        timestamp: measurement.time_slot,
         value: measurement.energy_kwh,
     }
 }
@@ -192,14 +181,14 @@ impl TimeseriesService {
         let mut upserted_ids = HashMap::new();
         for (index, point) in points.into_iter().enumerate() {
             let measurement_point = point.measurement_point.clone();
-            let timestamp = point.timestamp.clone();
+            let timestamp = point.timestamp;
             let point_doc = mongodb::bson::to_document(&point)?;
             let result = self
                 .0
                 .update_one(
                     doc! {
                         "measurement_point": measurement_point.clone(),
-                        "timestamp": timestamp.clone(),
+                        "timestamp": bson::DateTime::from_chrono(timestamp),
                     },
                     doc! {"$set": point_doc},
                 )
@@ -208,7 +197,7 @@ impl TimeseriesService {
             upserted_ids.insert(
                 index,
                 result.upserted_id.unwrap_or_else(|| {
-                    Bson::String(format!("{}:{}", measurement_point, timestamp))
+                    Bson::String(format!("{}:{}", measurement_point, timestamp.to_rfc3339()))
                 }),
             );
         }
@@ -219,24 +208,22 @@ impl TimeseriesService {
     pub async fn filter_values(
         &self,
         measurement_point: Option<String>,
-        start_time: Option<String>,
-        end_time: Option<String>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
     ) -> Result<Vec<TimeseriesSchema>> {
         let mut filter = doc! {};
         if let Some(point) = measurement_point {
             filter.insert("measurement_point", point);
         }
-        match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                filter.insert("timestamp", doc! {"$gte": start, "$lte": end});
-            }
-            (Some(start), None) => {
-                filter.insert("timestamp", doc! {"$gte": start});
-            }
-            (None, Some(end)) => {
-                filter.insert("timestamp", doc! {"$lte": end});
-            }
-            (None, None) => {}
+        let mut range = doc! {};
+        if let Some(start) = start_time {
+            range.insert("$gte", bson::DateTime::from_chrono(start));
+        }
+        if let Some(end) = end_time {
+            range.insert("$lte", bson::DateTime::from_chrono(end));
+        }
+        if !range.is_empty() {
+            filter.insert("timestamp", range);
         }
         Ok(self.0.find(filter).await?.try_collect().await?)
     }

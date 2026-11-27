@@ -1,17 +1,21 @@
-use ::primitives::utils::timestamp_to_datetime_string;
+use ::primitives::utils::{epoch_to_datetime, epoch_to_rfc3339};
 use anyhow::{ensure, Context, Result};
+use chrono::{DateTime, TimeDelta, Utc};
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use std::collections::{BTreeMap, HashMap};
 use tracing::info;
 
+use crate::primitives::penalty_policy::PenaltyPolicy;
 use crate::{
     connectors::evm_connector::complete_delivery_verification,
-    primitives::penalty_calculator::compute_delivery_verifications,
+    primitives::penalty_calculator::{
+        compute_delivery_verifications, compute_final_delivery_verifications,
+    },
 };
 
-/// Half-open delivery window, independent of trade creation/settlement times.
+/// Half-open delivery window, independent of trade creation/matching times.
 fn timeslot_window(timeslot: u64, market_duration: u64) -> Result<(u64, u64)> {
     ensure!(
         GLOBAL_CONSTANTS.time_slot_sec > 0,
@@ -36,21 +40,67 @@ fn timeslot_window(timeslot: u64, market_duration: u64) -> Result<(u64, u64)> {
 pub async fn run_execution_cycle(
     offchain_url: &str,
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
-    penalty_rate: f64,
     market_duration: u64,
-    penalty_tolerance_percent: f64,
+    penalty_policy: PenaltyPolicy,
 ) -> Result<usize> {
-    anyhow::ensure!(
-        penalty_tolerance_percent.is_finite() && (0.0..=100.0).contains(&penalty_tolerance_percent),
-        "Invalid penalty tolerance percentage"
-    );
-    ensure!(
-        penalty_rate.is_finite() && penalty_rate >= 0.0,
-        "Invalid penalty rate"
-    );
+    let (processed, _, all_measured) = run_cycle(
+        offchain_url,
+        evm_node_url,
+        trade_matching_address,
+        execution_engine_private_key,
+        timeslot,
+        market_duration,
+        penalty_policy,
+        false,
+    )
+    .await?;
+    // Do not release a retained slot just because a subset was verified.
+    Ok(if all_measured { processed } else { 0 })
+}
+
+/// Final cycle for one delivery slot whose grace period is over: every trade still
+/// pending receives a verdict, and a party without a usable reading is penalized on
+/// its whole net traded position. Measurements arriving later are not considered,
+/// because the slot is no longer selected. Returns whether every pending trade of
+/// the slot is now verified on-chain, so the caller knows when to stop retrying.
+pub async fn finalize_timeslot(
+    offchain_url: &str,
+    evm_node_url: &str,
+    trade_matching_address: &str,
+    execution_engine_private_key: &str,
+    timeslot: u64,
+    penalty_policy: PenaltyPolicy,
+) -> Result<bool> {
+    // Only this slot has expired: never widen the window to a multi-slot market duration.
+    let (processed, pending_count, _) = run_cycle(
+        offchain_url,
+        evm_node_url,
+        trade_matching_address,
+        execution_engine_private_key,
+        timeslot,
+        0,
+        penalty_policy,
+        true,
+    )
+    .await?;
+    Ok(processed == pending_count)
+}
+
+/// Returns (trades processed on-chain, trades pending verification, all pending trades had a verdict).
+#[allow(clippy::too_many_arguments)]
+async fn run_cycle(
+    offchain_url: &str,
+    evm_node_url: &str,
+    trade_matching_address: &str,
+    execution_engine_private_key: &str,
+    timeslot: u64,
+    market_duration: u64,
+    penalty_policy: PenaltyPolicy,
+    grace_period_over: bool,
+) -> Result<(usize, usize, bool)> {
     let offchain_storage_client = OffchainStorageClient::new(
         OffchainStorageTransport::from_env(),
         offchain_url,
@@ -60,10 +110,13 @@ pub async fn run_execution_cycle(
 
     // 1) fetch trades/measurements
     let (start_time, end_time) = timeslot_window(timeslot, market_duration)?;
+    let window = epoch_to_datetime(start_time)?..epoch_to_datetime(end_time)?;
     let (trades, measurements) = tokio::try_join!(
-        offchain_storage_client.fetch_trades(None, Some(start_time), Some(end_time)),
-        // Measurements use an inclusive end; trade queries use an exclusive end.
-        offchain_storage_client.fetch_measurements(start_time, end_time - 1),
+        offchain_storage_client.fetch_trades(None, Some(window.start), Some(window.end)),
+        // Measurements use an inclusive end; trade queries use an exclusive end. Stored
+        // times have millisecond precision.
+        offchain_storage_client
+            .fetch_measurements(window.start, window.end - TimeDelta::milliseconds(1)),
     )?;
     // Completed trades still contribute to facility totals and allocation weights.
     // Penalized trades may not be verified yet; the connector checks on-chain.
@@ -75,15 +128,16 @@ pub async fn run_execution_cycle(
         "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),
         measurements.len(),
-        timestamp_to_datetime_string(timeslot),
+        epoch_to_rfc3339(timeslot),
     );
 
-    if pending_count == 0 || measurements.is_empty() {
+    // After the grace period, missing measurements no longer postpone the verdict.
+    if pending_count == 0 || (measurements.is_empty() && !grace_period_over) {
         info!(
             "No pending trades or measurements for timeslot {}. Skipping execution cycle.",
-            timestamp_to_datetime_string(timeslot),
+            epoch_to_rfc3339(timeslot),
         );
-        return Ok(0);
+        return Ok((0, pending_count, false));
     }
 
     // Measurements identify facilities; trade parties identify their owners.
@@ -94,7 +148,7 @@ pub async fn run_execution_cycle(
     // Resolve each market once, then isolate slots even when the query window
     // spans several slots. Creation times must never select a meter reading.
     let mut market_slots = HashMap::new();
-    let mut trades_by_slot: BTreeMap<u64, Vec<_>> = BTreeMap::new();
+    let mut trades_by_slot: BTreeMap<DateTime<Utc>, Vec<_>> = BTreeMap::new();
     for trade in trades {
         let slot = if let Some(slot) = market_slots.get(&trade.market_id) {
             *slot
@@ -112,11 +166,9 @@ pub async fn run_execution_cycle(
                 market.market_id == trade.market_id,
                 "Market lookup returned a different market"
             );
-            let slot = market.delivery_start_time.parse::<u64>().with_context(|| {
-                format!("Invalid delivery start for market {}", trade.market_id)
-            })?;
+            let slot = market.delivery_start_time;
             ensure!(
-                (start_time..end_time).contains(&slot),
+                window.contains(&slot),
                 "Market delivery slot outside requested window"
             );
             market_slots.insert(trade.market_id.clone(), slot);
@@ -126,13 +178,17 @@ pub async fn run_execution_cycle(
     }
     let mut verifications = Vec::new();
     for (slot, trades) in trades_by_slot {
-        verifications.extend(compute_delivery_verifications(
+        let compute = if grace_period_over {
+            compute_final_delivery_verifications
+        } else {
+            compute_delivery_verifications
+        };
+        verifications.extend(compute(
             &trades,
             &measurements,
             &facility_owner_mapping,
             slot,
-            penalty_rate,
-            penalty_tolerance_percent,
+            penalty_policy,
         )?);
     }
     let all_measured = verifications.len() == pending_count;
@@ -140,11 +196,10 @@ pub async fn run_execution_cycle(
 
     let processed = complete_delivery_verification(
         evm_node_url,
-        trade_settlement_address,
+        trade_matching_address,
         execution_engine_private_key,
         verifications,
     )
     .await?;
-    // Do not release a retained slot just because a subset was verified.
-    Ok(if all_measured { processed } else { 0 })
+    Ok((processed, pending_count, all_measured))
 }

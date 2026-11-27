@@ -8,8 +8,43 @@ services with the generated proxy addresses.
 
 The DD-453 trade lifecycle targets fresh contract deployments and an empty
 off-chain database. Start the listener before submitting orders. No migration
-or reindexing tool is provided for older lifecycle records, and the listener
-does not persist its replay cursor across restarts.
+or reindexing tool is provided for older lifecycle records. The first listener
+start is live-only; subsequent restarts resume its MongoDB checkpoint. Unresolved
+events also persist in MongoDB and are retried on later blocks.
+
+## Actor ID Hashing Key
+
+For a fresh DD-459 service deployment, provision one private `ACTOR_ID_HASH_KEY`
+(32 random bytes encoded as 64 hex characters, without `0x`). Storage, the
+matching engine, execution engine, market orchestrator and enabled community-client
+subscriber require it at startup. Forecast order creation also requires it.
+Every trusted local actor-hash consumer, including test runners, must use the same
+key. Trade-only import tooling uses off-chain parties and does not need the key.
+Generate it once using `openssl rand -hex 32`, distribute it through your secret
+manager or protected environment file, and keep it separate from wallet keys.
+Do not commit or log it. Missing/malformed configuration fails closed; there is
+no runtime default or unkeyed fallback. Do not rotate it within a deployment:
+changing it changes every actor's on-chain identity.
+
+The integration/E2E Compose files supply a public test-only key for isolated local
+tests. Never use that key on a shared or public chain. Staging reads the private
+value from its deployment environment (`.env.ewds.local`); building the image does
+not require a key. The mapping database also contains sensitive associations and
+must remain private. Mapping-API authorization is deferred to a separate ticket;
+this change does not restrict the existing `/ids` or `ids.query` operations.
+Storage resolves on-chain community IDs directly through its own database,
+without a new reverse-lookup API or a remote conversion request.
+
+Deploy the updated `MarketController` and all services together into a fresh
+environment. Order, residual-order, trade and market IDs use lowercase UUIDv4
+text off-chain and the same 16 bytes on-chain, without hashing. Refresh the EWDS
+entity schemas with this deployment; hexadecimal/bare entity-ID inputs are no
+longer accepted. Actor identities and keyed pseudonyms remain separate.
+Markets now use random UUIDv4 IDs; `getMarketIds` resolves the
+community/type/delivery-start tuple to its existing ID. The contract enforces
+tuple uniqueness even when concurrent orchestrators propose different UUIDs.
+Community IDs on-chain are keyed pseudonyms, resolved to their original spelling
+by the storage listener. Existing deterministic market IDs are not migrated.
 
 ## Supported Networks
 
@@ -109,21 +144,21 @@ The report deploys a benchmark-only contract suite and records gas for:
 - `MarketController` mutating calls: `createMarkets` (1, 3 and 50 markets,
   and resending existing markets).
 - `OrderRegistry` mutating calls: `placeOrder`, `cancelOrder`, `updateStatus`,
-  and direct `settleOrder` partial-fill/residual-consumption benchmarks.
-- `TradeSettlement` mutating calls: `settleBatch`, `submitPenalties`,
+  and direct `fillOrder` partial-fill/residual-consumption benchmarks.
+- `TradeMatching` mutating calls: `submitMatches`, `submitPenalties`,
   `completeDeliveryVerification` (zero penalties and a new seller penalty on
-  separate settled trades; prerequisite transactions are reported separately).
+  separate matched trades; prerequisite transactions are reported separately).
 - View-call `estimateGas` values for the read functions used by services.
 
 View functions do not consume gas when called off-chain; they are included as
 estimates for completeness.
 
-Settlement is measured for standard matches and buyer-only, seller-only and
+`submitMatches` is measured for standard matches and buyer-only, seller-only and
 reciprocal preferred matches, at batch sizes `1,2,5` by default. Override them
 through Compose with, for example:
 
 ```bash
-GAS_REPORT_SETTLE_BATCH_SIZES=1,2,5,10 ./scripts/contracts.sh local gas-report
+GAS_REPORT_MATCH_BATCH_SIZES=1,2,5,10 ./scripts/contracts.sh local gas-report
 ```
 
 Each match consumes a 100000 bid against a 150000 offer at price 12000 and
@@ -131,8 +166,8 @@ registers a 50000 residual offer. Preferred cases use equal effective rates;
 the non-preferring side in a one-sided case falls back to its normal rate.
 All cases use unique orders; prerequisite placements are recorded separately.
 Batch-size comparisons include storage and calldata costs, not only match-type
-validation. Direct `settleOrder` rows are isolated benchmarks: production
-`settleBatch` measurements already include those internal calls.
+validation. Direct `fillOrder` rows are isolated benchmarks: production
+`submitMatches` measurements already include those internal calls.
 
 The script deploys a separate benchmark suite and does not update
 `addresses.env`. Report totals include fixture preparation and every alternative
@@ -152,8 +187,8 @@ documentation artifacts:
 | Target | Report | Notes |
 |---|---|---|
 | Local Anvil | `contracts-output/gas-report.md` | Baseline local benchmark run. |
-| Energy Web Volta Testnet | `contracts-output/volta-gas-report.md` | Historical snapshot predating DD-442; not updated for match-type validation or atomic residual settlement. |
-| Energy Web Chain | `contracts-output/ewc-gas-report.md` | Historical snapshot predating DD-442; not updated for match-type validation or atomic residual settlement. |
+| Energy Web Volta Testnet | `contracts-output/volta-gas-report.md` | Historical snapshot predating DD-442; not updated for match-type validation or atomic residual matching. |
+| Energy Web Chain | `contracts-output/ewc-gas-report.md` | Historical snapshot predating DD-442; not updated for match-type validation or atomic residual matching. |
 
 Generated address files and JSON reports are intentionally left untracked. They
 remain useful locally, but they are environment-specific execution artifacts
@@ -218,6 +253,8 @@ consume real EWT on Energy Web Chain.
 | `COMMUNITY_CLIENT_PRIVATE_KEY` | Bootstrap signer granted `OrderRegistry.COMMUNITY_CLIENT_ROLE`; use the same key for the client service. Defaults to the local Anvil test key locally, or to the deployer when unset. Additional clients are authorized through `grantRole`. |
 | `ACTOR_REGISTRAR_PRIVATE_KEY` | Signer granted `ACTOR_REGISTRAR_ROLE`. Defaults to the local Anvil test key for local deployments. |
 | `PROXY_ADMIN_PRIVATE_KEY` | Owner signer for the generated `ProxyAdmin` contracts. Defaults to the local Anvil test key for local deployments. |
+| `TRADE_MATCHING_PRICE_FLOOR` | Optional. Lowest clearing price (scaled integer rate) any match may carry. Unset or `0` means no floor. |
+| `TRADE_MATCHING_PRICE_CAP` | Optional. Highest clearing price (scaled integer rate) any match may carry. Unset or `0` means no cap. Both are applied with `TradeMatching.setPriceBounds` after deployment and can be changed later by the admin. |
 | `EWC_RPC_URL` | Energy Web Chain RPC override. Defaults to `https://rpc.energyweb.org`. |
 | `VOLTA_RPC_URL` | Volta RPC override. Defaults to `https://volta-rpc.energyweb.org`. |
 | `ALLOW_EWC_MAINNET_DEPLOY` | Required safety flag for EWC mainnet deployment. |
@@ -225,6 +262,6 @@ consume real EWT on Energy Web Chain.
 | `CONTRACTS_ENV_PATH` | Container path for generated address env file. Defaults to `/contracts/addresses.env`. |
 | `GAS_REPORT_PATH` | Container path for Markdown gas report. Defaults to `/contracts/gas-report.md`. |
 | `GAS_REPORT_JSON_PATH` | Container path for JSON gas report. Defaults to `/contracts/gas-report.json`. |
-| `GAS_REPORT_SETTLE_BATCH_SIZES` | Comma-separated positive integers for standard and preferred batch benchmarks. Defaults to `1,2,5`. |
+| `GAS_REPORT_MATCH_BATCH_SIZES` | Comma-separated positive integers for standard and preferred batch benchmarks. Defaults to `1,2,5`. |
 
 All `/contracts/...` paths are persisted on the host under `contracts-output/`.

@@ -6,17 +6,17 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./OrderRegistry.sol";
 
 /**
- * @title TradeSettlement
- * @notice Validates matches and emits settlement records by Actor UUID.
+ * @title TradeMatching
+ * @notice Validates matches and emits match records by Actor UUID.
  */
-contract TradeSettlement is Initializable, AccessControlUpgradeable {
+contract TradeMatching is Initializable, AccessControlUpgradeable {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant EXECUTION_ENGINE_ROLE =
         keccak256("EXECUTION_ENGINE_ROLE");
 
     OrderRegistry public registry;
 
-    event TradeSettled(
+    event TradeMatched(
         bytes16 indexed tradeId,
         bytes16 indexed bidId,
         bytes16 indexed offerId,
@@ -37,6 +37,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint64 penaltyEnergy
     );
     event PenaltiesSubmitted(uint256 count);
+    event PriceBoundsUpdated(uint64 priceFloor, uint64 priceCap);
     event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId);
 
     error InvalidOrderParams();
@@ -46,7 +47,10 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     error EnergyMismatch();
     error InvalidPenalty();
     error TradedQuantityMismatch();
-    error TradeAlreadySettled();
+    error NonUniformClearingPrice();
+    error InvalidPriceBounds();
+    error PriceOutOfBounds();
+    error TradeAlreadyMatched();
     error UnknownTrade();
 
     constructor() {
@@ -101,7 +105,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint256 tradedQuantity,
         uint32 numTrades
     );
-    struct MarketSettlement {
+    struct MarketMatchBatch {
         Match[] matches;
         ClearingResult clearingResult;
     }
@@ -109,7 +113,29 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     mapping(bytes16 => uint256) public penaltyEnergyByTrade;
     mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
-    struct SettledTrade {
+    /// @notice Lowest clearing price any match may carry. `0` means no floor.
+    uint64 public priceFloor;
+    /// @notice Highest clearing price any match may carry. `0` means no cap.
+    uint64 public priceCap;
+
+    /**
+     * @notice Configure the price band every match must fall within.
+     * @dev Prices are the scaled integer rates used on-chain. A cap of `0`
+     *      disables the cap; a floor of `0` disables the floor.
+     */
+    function setPriceBounds(
+        uint64 _priceFloor,
+        uint64 _priceCap
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_priceCap != 0 && _priceFloor > _priceCap) {
+            revert InvalidPriceBounds();
+        }
+        priceFloor = _priceFloor;
+        priceCap = _priceCap;
+        emit PriceBoundsUpdated(_priceFloor, _priceCap);
+    }
+
+    struct MatchedTrade {
         bytes16 bidId;
         bytes16 offerId;
         bool verified;
@@ -122,35 +148,53 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     }
 
     // Appended storage: existing proxy slots remain unchanged.
-    mapping(bytes16 => SettledTrade) public settledTrades;
+    mapping(bytes16 => MatchedTrade) public matchedTrades;
     mapping(bytes16 => mapping(bytes16 => uint256)) public penaltyEnergyByTradeAndActor;
 
     /**
-     * @notice Settle a batch of matched trades.
+     * @notice Record a batch of matches.
      * @dev Only callable by the Matching Engine (Operator).
      */
-    function settleBatch(
-        MarketSettlement[] calldata settlements
+    function submitMatches(
+        MarketMatchBatch[] calldata batches
     ) external onlyRole(OPERATOR_ROLE) {
-        for (uint256 m = 0; m < settlements.length; m++) {
-            MarketSettlement calldata settlement = settlements[m];
+        for (uint256 m = 0; m < batches.length; m++) {
+            MarketMatchBatch calldata batch = batches[m];
 
-            if (_sumSelectedEnergy(settlement.matches) != settlement.clearingResult.tradedQuantity) {
+            if (_sumSelectedEnergy(batch.matches) != batch.clearingResult.tradedQuantity) {
                 revert TradedQuantityMismatch();
             }
 
-            for (uint256 i = 0; i < settlement.matches.length; i++) {
-                _settleTrade(settlement.matches[i]);
+            // Uniform pricing (pay-as-clear markets): every Standard match of
+            // the batch must carry one and the same price. Preferred matches
+            // are bilateral and keep their own negotiated rate.
+            bool uniform = registry.marketController().getMatchingAlgorithm(
+                batch.clearingResult.marketId
+            ) == MarketController.MatchingAlgorithm.PayAsClear;
+            bool uniformPriceSet;
+            uint256 uniformPrice;
+
+            for (uint256 i = 0; i < batch.matches.length; i++) {
+                Match calldata trade = batch.matches[i];
+                if (uniform && trade.matchType == MatchType.Standard) {
+                    if (!uniformPriceSet) {
+                        uniformPrice = trade.clearingPrice;
+                        uniformPriceSet = true;
+                    } else if (trade.clearingPrice != uniformPrice) {
+                        revert NonUniformClearingPrice();
+                    }
+                }
+                _recordMatch(trade);
             }
 
             emit MarketClearing(
-                settlement.clearingResult.marketId,
-                settlement.clearingResult.clearingStatus,
-                settlement.clearingResult.clearingPrice,
-                settlement.clearingResult.totalSupply,
-                settlement.clearingResult.totalDemand,
-                settlement.clearingResult.tradedQuantity,
-                settlement.clearingResult.numTrades
+                batch.clearingResult.marketId,
+                batch.clearingResult.clearingStatus,
+                batch.clearingResult.clearingPrice,
+                batch.clearingResult.totalSupply,
+                batch.clearingResult.totalDemand,
+                batch.clearingResult.tradedQuantity,
+                batch.clearingResult.numTrades
             );
         }
     }
@@ -181,7 +225,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
                 revert InvalidPenalty();
             }
 
-            if (settledTrades[penalty.tradeId].verified) revert InvalidPenalty();
+            if (matchedTrades[penalty.tradeId].verified) revert InvalidPenalty();
             _recordPenalty(penalty.penalizedActorId, penalty.marketId, penalty.tradeId, penalty.penaltyEnergy);
         }
 
@@ -198,7 +242,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     ) external onlyRole(EXECUTION_ENGINE_ROLE) {
         for (uint256 i = 0; i < verifications.length; i++) {
             DeliveryVerification calldata verification = verifications[i];
-            SettledTrade storage trade = settledTrades[verification.tradeId];
+            MatchedTrade storage trade = matchedTrades[verification.tradeId];
             if (trade.bidId == bytes16(0)) revert UnknownTrade();
             if (trade.verified) continue;
 
@@ -236,7 +280,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         emit PenaltyRecorded(actorId, marketId, tradeId, energy);
     }
 
-    function _settleTrade(Match calldata trade) internal {
+    function _recordMatch(Match calldata trade) internal {
         if (
             trade.tradeId == bytes16(0) ||
             trade.bid.orderId == bytes16(0) ||
@@ -264,9 +308,10 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             false
         );
 
-        if (settledTrades[trade.tradeId].bidId != bytes16(0)) revert TradeAlreadySettled();
+        if (matchedTrades[trade.tradeId].bidId != bytes16(0)) revert TradeAlreadyMatched();
 
         _validateMatch(trade);
+        _validatePriceBounds(trade.clearingPrice);
 
         if (
             trade.selectedEnergy == 0 ||
@@ -276,12 +321,12 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             revert EnergyMismatch();
         }
 
-        registry.settleOrder(trade.bid.orderId, uint64(trade.selectedEnergy), trade.residualBidId);
-        registry.settleOrder(trade.offer.orderId, uint64(trade.selectedEnergy), trade.residualOfferId);
+        registry.fillOrder(trade.bid.orderId, uint64(trade.selectedEnergy), trade.residualBidId);
+        registry.fillOrder(trade.offer.orderId, uint64(trade.selectedEnergy), trade.residualOfferId);
 
-        settledTrades[trade.tradeId] = SettledTrade(trade.bid.orderId, trade.offer.orderId, false);
+        matchedTrades[trade.tradeId] = MatchedTrade(trade.bid.orderId, trade.offer.orderId, false);
 
-        emit TradeSettled(
+        emit TradeMatched(
             trade.tradeId,
             trade.bid.orderId,
             trade.offer.orderId,
@@ -329,6 +374,12 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             trade.clearingPrice < offerRate
         ) {
             revert PriceMismatch();
+        }
+    }
+
+    function _validatePriceBounds(uint256 price) internal view {
+        if (price < priceFloor || (priceCap != 0 && price > priceCap)) {
+            revert PriceOutOfBounds();
         }
     }
 

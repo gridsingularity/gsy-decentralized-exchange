@@ -2,8 +2,8 @@
 
 ## Role in the System
 
-`gsy-execution-engine` computes imbalance penalties after trade settlement and
-records delivery verification in `TradeSettlement`.
+`gsy-execution-engine` computes imbalance penalties after trades are matched on-chain and
+records delivery verification in `TradeMatching`.
 
 ## Execution Cycle
 
@@ -13,7 +13,7 @@ Each cycle:
 2. Fetch trades plus measurement points/timeseries for that delivery window from
    off-chain storage. Resolve each distinct market once through the existing
    HTTP/EWDS market lookup and group trades by its `delivery_start_time`, not
-   trade creation or settlement time.
+   trade creation or matching time.
 3. Compute facility totals and penalty allocations separately for each slot,
    including `Executed` and `Settled` trades in the baseline. Only `Matched` or
    `Penalized` trades with usable readings for both parties receive verdicts;
@@ -45,23 +45,34 @@ Current penalty calculator logic:
   ties use trade ID order. Allocations sum exactly to the facility penalty and
   do not depend on the order of query results.
 
-Outside the tolerance band, the existing `penalty_rate` applies to the **full**
-deviation, not only the excess beyond the band. For 100 kWh traded with 5%
-tolerance, 105 kWh incurs no penalty; 106 kWh incurs a penalty on 6 kWh. Tolerance
-is independent of `penalty_rate` (`0.10` means 10% of the deviation).
-For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
-produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
+Outside the tolerance band, charge the **full** absolute deviation in kWh. The rate
+in currency/kWh rises linearly from the minimum at the tolerance boundary to the
+maximum at 100% deviation. Above 100%, the rate is capped, not the total charge.
+For relative deviation `d = |measured - net| / |net|` and tolerance fraction `t`,
+the rate between those bounds is `min + (max - min) * (d - t) / (1 - t)`.
+A nonzero reading against zero net uses the maximum rate. With 100% tolerance,
+only deviations strictly above 100% of the net incur a charge, at the maximum rate.
+
+The band is compared in integer on-chain units: the reading is rounded to
+0.0001 kWh and the tolerance percentage to 0.0001 percent, so a reading exactly
+on the inclusive limit (for example 1.995 kWh against 1.9 kWh traded at 5%) is
+not penalised through floating-point round-off.
+With the shipped bounds (0.10 to 0.20 currency/kWh) and 5% tolerance, purchases
+of 4 and 6 kWh and consumption of 12 kWh yield a 20% deviation. The 2 kWh are
+charged at approximately 0.115789 currency/kWh. Round the total once to 2,316
+contract units, then allocate 926 and 1,390 units to the two trades.
 
 Measurements identify facilities. The engine reads the facility-to-owner mapping
-from off-chain storage and derives each owner's on-chain ID with the ID service's
-shared Blake2b-16 helper, without writing ID mappings. That owner ID is used in
-`OrderParams.createdBy` and the indexed trade parties; the submitting service
-wallet is separate. This deployment guarantees one facility per owner.
-Missing/unmapped, non-finite, or conflicting readings for a facility/slot leave its trades pending;
-they do not produce a zero-penalty success. Identical readings are not counted
-twice. Multiple distinct readings are not summed or arbitrarily selected: they
-need an unambiguous net measurement before verification. Both parties' readings
-are required before atomic completion.
+from off-chain storage and compares the original owner ID with indexed trade
+parties directly. No ID-service conversion or hashing is needed for this join.
+Only contract-bound actor arguments (such as standalone penalties) use keyed
+hashes. The submitting service wallet is separate. This deployment guarantees one facility per owner.
+Facility and owner IDs are preserved exactly, including UUID-shaped strings.
+During the grace period, missing/unmapped, non-finite, or conflicting readings for a
+facility/slot leave its trades pending. Readings are compared at 0.0001 kWh
+precision: for example, 10.0 and 10.00001 kWh count as one reading, not a conflict.
+Distinct readings are not summed or arbitrarily selected. After the grace period,
+an unusable reading is treated as zero delivery during finalization.
 HTTP and EWDS normalize direction-labelled export magnitudes to negative energy;
 compatibility profiles retain their original signed values, including when a
 point's direction has changed in a later slot. Both transports use the same
@@ -80,8 +91,10 @@ does not solve this limitation.
 
 ## Duplicate Submission Protection
 
-Before submitting, the engine checks `settledTrades(tradeId).verified` and skips
-completed trades. The contract also ignores repeated verdicts, so receipt loss
+Before submitting, the engine checks `matchedTrades(tradeId).verified` and skips
+completed trades. An invalid or unregistered trade ID is logged and excluded from
+that cycle, not counted as verified. An RPC error instead fails the cycle.
+The contract also ignores repeated verdicts, so receipt loss
 or concurrent submissions cannot duplicate penalties or completion events.
 Matching pre-recorded penalties are reused; conflicting amounts reject the
 transaction. A successful receipt is required before reporting progress.
@@ -105,8 +118,28 @@ Empty results, failures, and successful submissions do not remove a retained
 slot early: additional records can still arrive. The on-chain `verified` flag
 prevents resubmission for trades already processed, including zero-penalty trades.
 The eligible window is recalculated from time, including after restart or skipped polling intervals;
-neither restarts nor retries extend the deadline. Records arriving beyond that
-window require separate historical processing, which is not implemented here.
+neither restarts nor retries extend the deadline.
+
+### Finalization after the grace period
+
+Once a slot's grace period is over, the engine closes the trades of that slot
+that are still pending: every one of them receives a verdict. A party that still
+has no usable reading (missing, conflicting or non-finite) is treated as having
+delivered nothing and is penalized on its whole net traded position; its
+counterparties are charged from their own readings, so a missing reading of one
+party no longer postpones or waives the penalty of the other.
+
+The slot finalized is the one whose grace period ended most recently, provided
+its delivery also ended at least one grace period ago by the wall clock (this
+matters for a negative `EXECUTION_ENGINE_OFFSET_MIN`, where the target runs ahead
+of the clock). Finalization is retried on every polling cycle until all pending
+trades of the slot are verified on-chain, for as long as it remains the latest
+expired slot, i.e. for one slot duration. Only that single slot is finalized,
+regardless of the market duration. If the engine is not running during that time,
+the slot is not finalized.
+
+Records arriving after finalization are ignored: the trades are already verified
+on-chain and the slot is no longer selected.
 
 `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` replaces the cycle-count setting
 `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT`; update existing environment overrides.
@@ -146,13 +179,19 @@ and both directions of deviation over HTTP/EWDS with either matching algorithm.
 
 ## Key Config
 
-- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate> [--penalty-tolerance-percent <percent>]`
+- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> [--penalty-tolerance-percent <percent>]`
 - Env:
-  - `TRADE_SETTLEMENT_ADDRESS`
+  - `TRADE_MATCHING_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)
   - `EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT` (default `5`; set `0` for strict comparison)
+  - `EXECUTION_ENGINE_PENALTY_MIN_RATE` (default: `0.10` currency/kWh)
+  - `EXECUTION_ENGINE_PENALTY_MAX_RATE` (image and Compose default: `0.20`)
 
-Penalty tolerance must be a finite percentage between 0 and 100. Invalid values
-fail startup. The CLI option takes precedence over the environment variable.
+Both rate bounds are configured through the environment only. If running the binary
+directly without a maximum, it uses the minimum for both bounds (flat pricing).
+Replace the old positional minimum and `--penalty-max-rate` flag with the
+corresponding environment variables. Rates must be finite and
+`0 <= min <= max`; tolerance must be finite and between 0 and 100 inclusive.
+Invalid settings fail startup. The tolerance CLI option takes precedence over its environment variable.

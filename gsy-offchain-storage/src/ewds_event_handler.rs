@@ -2,6 +2,7 @@ use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
 use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
     orders::DbOrderSchema,
@@ -15,7 +16,6 @@ use primitives::ewds::dto::{
 use primitives::ewds::{
     invalid_event, is_invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType,
 };
-use primitives::utils::epoch_to_rfc3339;
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
@@ -131,7 +131,7 @@ impl EwdsEventPublisher {
     pub fn publish_market_event(
         &self,
         markets: Vec<EwdsMarketDto>,
-        occurred_at: u64,
+        occurred_at: DateTime<Utc>,
     ) -> JoinHandle<()> {
         self.spawn_event(EwdsEventType::Market, occurred_at, markets)
     }
@@ -139,7 +139,7 @@ impl EwdsEventPublisher {
     fn spawn_event<T: Serialize + Send + 'static>(
         &self,
         event_type: EwdsEventType,
-        occurred_at: u64,
+        occurred_at: DateTime<Utc>,
         data: T,
     ) -> JoinHandle<()> {
         let event_id = Uuid::new_v4().to_string();
@@ -161,13 +161,13 @@ impl EwdsEventPublisher {
         &self,
         event_type: EwdsEventType,
         event_id: String,
-        occurred_at: u64,
+        occurred_at: DateTime<Utc>,
         data: T,
     ) -> Result<()> {
         let envelope = EwdsEventEnvelope {
             event_id: event_id.clone(),
             event_type,
-            occurred_at: epoch_to_rfc3339(occurred_at),
+            occurred_at: occurred_at.to_rfc3339(),
             data,
         };
 
@@ -228,25 +228,30 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
     match envelope.event_type {
         EwdsEventType::Measurements => {
             let measurements = parse_batch(envelope.data, |measurement: EwdsMeasurementDto| {
-                MeasurementSchema::try_from(measurement)
+                let mut measurement = MeasurementSchema::try_from(measurement)?;
+                measurement.facility_id =
+                    primitives::utils::validate_offchain_actor_id(&measurement.facility_id)?;
+                measurement.community_uuid =
+                    primitives::utils::validate_offchain_actor_id(&measurement.community_uuid)?;
+                Ok(measurement)
             })?;
             retry_db_write(|| insert_measurements(db, &measurements)).await?;
         }
         EwdsEventType::Facility => {
             let facilities = parse_batch(envelope.data, |dto: EwdsFacilityDto| {
-                FacilitySchema::try_from(dto)
+                FacilitySchema::try_from(dto).and_then(FacilitySchema::normalize_ids)
             })?;
             let store = db.facilities();
             retry_db_write(|| store.store(facilities.clone())).await?;
         }
         EwdsEventType::Site => {
-            let sites = parse_batch(envelope.data, |dto: EwdsSiteDto| SiteSchema::try_from(dto))?;
+            let sites = parse_batch(envelope.data, |dto: EwdsSiteDto| SiteSchema::try_from(dto).and_then(SiteSchema::normalize_ids))?;
             let store = db.sites();
             retry_db_write(|| store.store(sites.clone())).await?;
         }
         EwdsEventType::Community => {
             let communities = parse_batch(envelope.data, |dto: EwdsCommunityDto| {
-                EnergyCommunitySchema::try_from(dto)
+                EnergyCommunitySchema::try_from(dto).and_then(EnergyCommunitySchema::normalize_ids)
             })?;
             let store = db.communities();
             retry_db_write(|| store.store(communities.clone())).await?;
