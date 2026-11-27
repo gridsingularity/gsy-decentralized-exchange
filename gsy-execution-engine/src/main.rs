@@ -1,4 +1,5 @@
 use ::primitives::{log::setup_logging, utils::timestamp_to_datetime_string};
+use anyhow::Context;
 use clap::Parser;
 use gsy_execution_engine::{
     primitives::penalty_policy::PenaltyPolicy,
@@ -8,6 +9,16 @@ use gsy_execution_engine::{
 };
 use std::env;
 use tracing::{error, info};
+
+fn penalty_rate_from_env(name: &str, default: f64) -> anyhow::Result<f64> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse()
+            .with_context(|| format!("{name} must be a number")),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error).context(name.to_owned()),
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,13 +34,15 @@ async fn main() -> anyhow::Result<()> {
             node_port,
             polling_interval,
             market_duration,
-            penalty_rate,
-            penalty_max_rate,
             penalty_tolerance_percent,
         } => {
-            let policy = PenaltyPolicy::new(
-                penalty_rate,
-                penalty_max_rate.unwrap_or(penalty_rate),
+            let penalty_min_rate =
+                penalty_rate_from_env("EXECUTION_ENGINE_PENALTY_MIN_RATE", 0.10)?;
+            let penalty_max_rate =
+                penalty_rate_from_env("EXECUTION_ENGINE_PENALTY_MAX_RATE", penalty_min_rate)?;
+            let penalty_policy = PenaltyPolicy::new(
+                penalty_min_rate,
+                penalty_max_rate,
                 penalty_tolerance_percent,
             )?;
             info!("Starting engine...");
@@ -68,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
                     &execution_engine_private_key,
                     timeslot,
                     market_duration,
-                    policy,
+                    penalty_policy,
                 )
                 .await
                 {
@@ -92,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
                         &trade_matching_address,
                         &execution_engine_private_key,
                         expired,
-                        policy,
+                        penalty_policy,
                     )
                     .await
                     {

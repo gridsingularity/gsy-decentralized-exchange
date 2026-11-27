@@ -28,14 +28,6 @@ pub enum Commands {
         #[clap(default_value_t = 900)]
         market_duration: u64,
 
-        /// Minimum penalty rate in currency/kWh.
-        #[clap(default_value_t = 0.10)]
-        penalty_rate: f64,
-
-        /// Maximum rate at 100% deviation (defaults to the minimum for flat pricing).
-        #[clap(long, env = "EXECUTION_ENGINE_PENALTY_MAX_RATE")]
-        penalty_max_rate: Option<f64>,
-
         /// Allowed deviation as a percentage of traded energy (0 disables tolerance).
         #[clap(
             long,

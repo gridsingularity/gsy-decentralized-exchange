@@ -1,5 +1,5 @@
 use gsy_execution_engine::primitives::penalty_calculator::{
-    compute_delivery_verifications, compute_final_delivery_verifications, compute_penalties,
+    compute_delivery_verifications, compute_final_delivery_verifications,
 };
 use gsy_execution_engine::primitives::penalty_policy::PenaltyPolicy;
 use primitives::db_api_schema::{
@@ -68,7 +68,7 @@ fn measurement(facility_id: &str, energy_kwh: f64) -> MeasurementSchema {
 }
 
 #[test]
-fn compute_penalties_matches_facility_measurements_to_owner_ids() {
+fn verification_matches_facility_measurements_to_owner_ids() {
     let measurements = vec![
         measurement("areaalice", 12.0),
         measurement("areabob", -10.0),
@@ -80,7 +80,7 @@ fn compute_penalties_matches_facility_measurements_to_owner_ids() {
         ("areabob".to_string(), "bob".to_string()),
     ]);
 
-    let penalties = compute_penalties(
+    let verdicts = compute_delivery_verifications(
         &[trade()],
         &measurements,
         &facility_owner_mapping,
@@ -89,9 +89,9 @@ fn compute_penalties_matches_facility_measurements_to_owner_ids() {
     )
     .unwrap();
 
-    assert_eq!(penalties.len(), 1);
-    assert_eq!(penalties[0].penalty_cost, 2_000);
-    assert_eq!(penalties[0].penalized_account, "alice".to_owned());
+    assert_eq!(verdicts.len(), 1);
+    assert_eq!(verdicts[0].buyer_penalty_cost, 2_000);
+    assert_eq!(verdicts[0].seller_penalty_cost, 0);
 }
 
 #[test]
@@ -171,17 +171,6 @@ fn verification_penalizes_each_partys_own_deviation_in_both_directions() {
             (expected_buyer, expected_seller),
             "buyer={buyer}, seller={seller}"
         );
-        let penalties =
-            compute_penalties(&trades, &measurements, &mapping, 1_000, flat(0.1, 5.0)).unwrap();
-        for (party, cost) in [("alice", expected_buyer), ("bob", expected_seller)] {
-            let penalty = penalties
-                .iter()
-                .find(|penalty| penalty.penalized_account == party.to_owned());
-            assert_eq!(
-                penalty.map(|penalty| penalty.penalty_cost),
-                (cost > 0).then_some(cost)
-            );
-        }
     }
 }
 
@@ -282,7 +271,7 @@ fn verification_keeps_distinct_owners_measurements_separate() {
         ("seller-meter".into(), "bob".to_string()),
     ]);
     let mut first = trade();
-    first.buyer = first_id.clone();
+    first.buyer = first_id;
     let mut second = first.clone();
     second.trade_uuid = "trade-2".into();
     second.buyer = second_id;
@@ -296,10 +285,8 @@ fn verification_keeps_distinct_owners_measurements_separate() {
             .unwrap();
     assert_eq!(verifications.len(), 1);
     assert_eq!(verifications[0].trade_uuid, "trade-1");
-    let penalties =
-        compute_penalties(&trades, &measurements, &mapping, 1_000, flat(0.1, 5.0)).unwrap();
-    assert_eq!(penalties.len(), 1);
-    assert_eq!(penalties[0].penalized_account, first_id);
+    assert_eq!(verifications[0].buyer_penalty_cost, 2_000);
+    assert_eq!(verifications[0].seller_penalty_cost, 0);
 }
 
 fn matched(id: &str, buyer: &str, seller: &str, energy: f64) -> DbTradeSchema {
@@ -712,22 +699,6 @@ fn tolerance_is_inclusive_and_penalties_use_the_full_deviation() {
                 verifications[0].buyer_penalty_cost + verifications[0].seller_penalty_cost,
                 expected_cost,
                 "traded={traded}, measured={measured}, tolerance={tolerance}"
-            );
-            let penalties = compute_penalties(
-                &trades,
-                &measurements,
-                &mapping,
-                1_000,
-                flat(0.1, tolerance),
-            )
-            .unwrap();
-            assert_eq!(penalties.len(), usize::from(expected_cost > 0));
-            assert_eq!(
-                penalties
-                    .iter()
-                    .map(|penalty| penalty.penalty_cost)
-                    .sum::<u64>(),
-                expected_cost
             );
         }
     }

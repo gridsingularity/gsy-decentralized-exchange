@@ -179,17 +179,19 @@ and both directions of deviation over HTTP/EWDS with either matching algorithm.
 
 ## Key Config
 
-- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate> [--penalty-max-rate <rate>] [--penalty-tolerance-percent <percent>]`
+- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> [--penalty-tolerance-percent <percent>]`
 - Env:
   - `TRADE_MATCHING_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)
   - `EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT` (default `5`; set `0` for strict comparison)
+  - `EXECUTION_ENGINE_PENALTY_MIN_RATE` (default: `0.10` currency/kWh)
   - `EXECUTION_ENGINE_PENALTY_MAX_RATE` (image and Compose default: `0.20`)
 
-The positional rate is the minimum (default `0.10`; use `EXECUTION_ENGINE_PENALTY_MIN_RATE`
-to set it in Compose). Running the binary without a maximum uses the minimum
-for both bounds, preserving single-rate pricing. Rates must be finite and
+Both rate bounds are configured through the environment only. If running the binary
+directly without a maximum, it uses the minimum for both bounds (flat pricing).
+Replace the old positional minimum and `--penalty-max-rate` flag with the
+corresponding environment variables. Rates must be finite and
 `0 <= min <= max`; tolerance must be finite and between 0 and 100 inclusive.
-Invalid settings fail startup. CLI options take precedence over the environment.
+Invalid settings fail startup. The tolerance CLI option takes precedence over its environment variable.

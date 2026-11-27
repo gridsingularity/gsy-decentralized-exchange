@@ -23,63 +23,6 @@ pub struct DeliveryVerification {
     pub seller_penalty_cost: u64,
 }
 
-/// Allocates each facility's delivery-slot penalty across its trades.
-///
-/// Measurements are mapped from facility IDs to the trade's buyer/seller owner IDs.
-/// Compare signed measurements against purchases minus sales, across all indexed
-/// trades in this slot (including completed trades). Allocate by absolute traded
-/// quantity. Both parties need a usable reading before their trade can complete,
-/// until the slot's grace period is over (see `compute_final_delivery_verifications`).
-///
-/// # Arguments
-///
-/// * `trades` - A slice of DbTradeSchema records.
-/// * `measurements` - A slice of MeasurementSchema records.
-/// * `delivery_slot` - All supplied trades must belong to this delivery slot.
-/// * `policy` - Slot pricing bounds and inclusive deviation tolerance.
-///
-/// # Returns
-///
-/// A vector of Penalty structs.
-pub fn compute_penalties(
-    trades: &[DbTradeSchema],
-    measurements: &[MeasurementSchema],
-    facility_owner_mapping: &HashMap<String, String>,
-    delivery_slot: u64,
-    policy: PenaltyPolicy,
-) -> Result<Vec<Penalty>> {
-    let verifications = compute_delivery_verifications(
-        trades,
-        measurements,
-        facility_owner_mapping,
-        delivery_slot,
-        policy,
-    )?;
-    let trades_by_id: HashMap<_, _> = trades
-        .iter()
-        .map(|trade| (trade.trade_uuid.as_str(), trade))
-        .collect();
-    Ok(verifications
-        .into_iter()
-        .flat_map(|verification| {
-            let trade = trades_by_id[verification.trade_uuid.as_str()];
-            [
-                (trade.buyer.clone(), verification.buyer_penalty_cost),
-                (trade.seller.clone(), verification.seller_penalty_cost),
-            ]
-            .into_iter()
-            .filter(|(_, cost)| *cost > 0)
-            .map(|(account, cost)| Penalty {
-                penalized_account: account,
-                market_id: trade.market_id.clone(),
-                trade_uuid: trade.trade_uuid.clone(),
-                penalty_cost: cost,
-            })
-            .collect::<Vec<_>>()
-        })
-        .collect())
-}
-
 #[derive(Default)]
 struct FacilityTrades<'a> {
     bought: u128,
@@ -95,14 +38,14 @@ pub fn compute_delivery_verifications(
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
     delivery_slot: u64,
-    policy: PenaltyPolicy,
+    penalty_policy: PenaltyPolicy,
 ) -> Result<Vec<DeliveryVerification>> {
     delivery_verifications(
         trades,
         measurements,
         facility_owner_mapping,
         delivery_slot,
-        policy,
+        penalty_policy,
         false,
     )
 }
@@ -116,14 +59,14 @@ pub fn compute_final_delivery_verifications(
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
     delivery_slot: u64,
-    policy: PenaltyPolicy,
+    penalty_policy: PenaltyPolicy,
 ) -> Result<Vec<DeliveryVerification>> {
     delivery_verifications(
         trades,
         measurements,
         facility_owner_mapping,
         delivery_slot,
-        policy,
+        penalty_policy,
         true,
     )
 }
@@ -133,7 +76,7 @@ fn delivery_verifications(
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
     delivery_slot: u64,
-    policy: PenaltyPolicy,
+    penalty_policy: PenaltyPolicy,
     grace_period_over: bool,
 ) -> Result<Vec<DeliveryVerification>> {
     let mut facilities: HashMap<&str, FacilityTrades<'_>> = HashMap::new();
@@ -219,7 +162,7 @@ fn delivery_verifications(
             None => continue,
         };
         let net = i128::try_from(totals.bought)? - i128::try_from(totals.sold)?;
-        let cost = policy.cost(net, measured)?;
+        let cost = penalty_policy.cost(net, measured)?;
         for (trade_id, cost) in allocate_penalty(cost, &totals.quantities) {
             allocations.insert((facility, trade_id), cost);
         }

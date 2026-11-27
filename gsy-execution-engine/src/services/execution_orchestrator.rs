@@ -43,7 +43,7 @@ pub async fn run_execution_cycle(
     execution_engine_private_key: &str,
     timeslot: u64,
     market_duration: u64,
-    policy: PenaltyPolicy,
+    penalty_policy: PenaltyPolicy,
 ) -> Result<usize> {
     let (processed, _, all_measured) = run_cycle(
         offchain_url,
@@ -52,7 +52,7 @@ pub async fn run_execution_cycle(
         execution_engine_private_key,
         timeslot,
         market_duration,
-        policy,
+        penalty_policy,
         false,
     )
     .await?;
@@ -71,7 +71,7 @@ pub async fn finalize_timeslot(
     trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
-    policy: PenaltyPolicy,
+    penalty_policy: PenaltyPolicy,
 ) -> Result<bool> {
     // Only this slot has expired: never widen the window to a multi-slot market duration.
     let (processed, pending_count, _) = run_cycle(
@@ -81,7 +81,7 @@ pub async fn finalize_timeslot(
         execution_engine_private_key,
         timeslot,
         0,
-        policy,
+        penalty_policy,
         true,
     )
     .await?;
@@ -97,7 +97,7 @@ async fn run_cycle(
     execution_engine_private_key: &str,
     timeslot: u64,
     market_duration: u64,
-    policy: PenaltyPolicy,
+    penalty_policy: PenaltyPolicy,
     grace_period_over: bool,
 ) -> Result<(usize, usize, bool)> {
     let offchain_storage_client = OffchainStorageClient::new(
@@ -186,7 +186,7 @@ async fn run_cycle(
             &measurements,
             &facility_owner_mapping,
             slot,
-            policy,
+            penalty_policy,
         )?);
     }
     let all_measured = verifications.len() == pending_count;
