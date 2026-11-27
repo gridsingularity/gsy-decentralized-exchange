@@ -45,16 +45,22 @@ Current penalty calculator logic:
   ties use trade ID order. Allocations sum exactly to the facility penalty and
   do not depend on the order of query results.
 
-Outside the tolerance band, the existing `penalty_rate` applies to the **full**
-deviation, not only the excess beyond the band. For 100 kWh traded with 5%
-tolerance, 105 kWh incurs no penalty; 106 kWh incurs a penalty on 6 kWh. Tolerance
-is independent of `penalty_rate` (`0.10` means 10% of the deviation).
+Outside the tolerance band, charge the **full** absolute deviation in kWh. The rate
+in currency/kWh rises linearly from the minimum at the tolerance boundary to the
+maximum at 100% deviation. Above 100%, the rate is capped, not the total charge.
+For relative deviation `d = |measured - net| / |net|` and tolerance fraction `t`,
+the rate between those bounds is `min + (max - min) * (d - t) / (1 - t)`.
+A nonzero reading against zero net uses the maximum rate. With 100% tolerance,
+only deviations strictly above 100% of the net incur a charge, at the maximum rate.
+
 The band is compared in integer on-chain units: the reading is rounded to
 0.0001 kWh and the tolerance percentage to 0.0001 percent, so a reading exactly
 on the inclusive limit (for example 1.995 kWh against 1.9 kWh traded at 5%) is
 not penalised through floating-point round-off.
-For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
-produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
+With the shipped bounds (0.10 to 0.20 currency/kWh) and 5% tolerance, purchases
+of 4 and 6 kWh and consumption of 12 kWh yield a 20% deviation. The 2 kWh are
+charged at approximately 0.115789 currency/kWh. Round the total once to 2,316
+contract units, then allocate 926 and 1,390 units to the two trades.
 
 Measurements identify facilities. The engine reads the facility-to-owner mapping
 from off-chain storage and compares the original owner ID with indexed trade
@@ -173,13 +179,19 @@ and both directions of deviation over HTTP/EWDS with either matching algorithm.
 
 ## Key Config
 
-- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate> [--penalty-tolerance-percent <percent>]`
+- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> [--penalty-tolerance-percent <percent>]`
 - Env:
   - `TRADE_MATCHING_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)
   - `EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT` (default `5`; set `0` for strict comparison)
+  - `EXECUTION_ENGINE_PENALTY_MIN_RATE` (default: `0.10` currency/kWh)
+  - `EXECUTION_ENGINE_PENALTY_MAX_RATE` (image and Compose default: `0.20`)
 
-Penalty tolerance must be a finite percentage between 0 and 100. Invalid values
-fail startup. The CLI option takes precedence over the environment variable.
+Both rate bounds are configured through the environment only. If running the binary
+directly without a maximum, it uses the minimum for both bounds (flat pricing).
+Replace the old positional minimum and `--penalty-max-rate` flag with the
+corresponding environment variables. Rates must be finite and
+`0 <= min <= max`; tolerance must be finite and between 0 and 100 inclusive.
+Invalid settings fail startup. The tolerance CLI option takes precedence over its environment variable.

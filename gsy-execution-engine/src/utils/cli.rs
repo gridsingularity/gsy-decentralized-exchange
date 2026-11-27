@@ -28,10 +28,6 @@ pub enum Commands {
         #[clap(default_value_t = 900)]
         market_duration: u64,
 
-        /// Penalty rate (e.g., 0.10 for 10%)
-        #[clap(default_value_t = 0.10)]
-        penalty_rate: f64,
-
         /// Allowed deviation as a percentage of traded energy (0 disables tolerance).
         #[clap(
             long,

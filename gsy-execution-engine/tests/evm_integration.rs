@@ -20,6 +20,7 @@ use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
     connectors::evm_connector::{complete_delivery_verification, submit_penalties},
     primitives::penalty_calculator::{DeliveryVerification, Penalty},
+    primitives::penalty_policy::PenaltyPolicy,
     services::execution_orchestrator::run_execution_cycle,
     timeslot_scheduler::TimeslotScheduler,
 };
@@ -397,6 +398,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
     let client = contract.client();
     let server = MockServer::start().await;
     let slot_duration = GLOBAL_CONSTANTS.time_slot_sec;
+    let policy = PenaltyPolicy::new(0.10, 0.20, 5.0).unwrap();
     let current = (1_800_000_000 / slot_duration) * slot_duration;
     let retained = current - slot_duration;
     let rollover = DateTime::<Utc>::from_timestamp(current as i64, 0).unwrap()
@@ -525,9 +527,8 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 &format!("{:?}", contract.address()),
                 PRIVATE_KEY,
                 timeslot,
-                0.10,
                 slot_duration,
-                5.0,
+                policy,
             )
             .await;
             if timeslot == retained && fail_query {
@@ -549,12 +550,12 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                     .call()
                     .await
                     .unwrap(),
-                U256::from(5_000),
+                U256::from(7_368), // 5 kWh deviation on a 10 kWh commitment
                 "Current-slot penalty must not wait for retained-slot records"
             );
         }
 
-        let first_penalty = if elapsed >= 4 { 2_000u64 } else { 0 };
+        let first_penalty = if elapsed >= 4 { 2_316u64 } else { 0 };
         let second_penalty = 0u64;
         for (id, expected) in [(1, first_penalty), (2, second_penalty)] {
             assert_eq!(
@@ -566,7 +567,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 U256::from(expected)
             );
         }
-        for (id, expected) in [(1, first_penalty), (2, second_penalty), (3, 5_000)] {
+        for (id, expected) in [(1, first_penalty), (2, second_penalty), (3, 7_368)] {
             let actor_id =
                 hex_to_bytes16(&derive_onchain_id(&format!("alice-{id}"))).unwrap();
             assert_eq!(

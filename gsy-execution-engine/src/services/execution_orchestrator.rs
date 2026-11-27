@@ -7,6 +7,7 @@ use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTranspo
 use std::collections::{BTreeMap, HashMap};
 use tracing::info;
 
+use crate::primitives::penalty_policy::PenaltyPolicy;
 use crate::{
     connectors::evm_connector::complete_delivery_verification,
     primitives::penalty_calculator::{
@@ -42,9 +43,8 @@ pub async fn run_execution_cycle(
     trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
-    penalty_rate: f64,
     market_duration: u64,
-    penalty_tolerance_percent: f64,
+    penalty_policy: PenaltyPolicy,
 ) -> Result<usize> {
     let (processed, _, all_measured) = run_cycle(
         offchain_url,
@@ -52,9 +52,8 @@ pub async fn run_execution_cycle(
         trade_matching_address,
         execution_engine_private_key,
         timeslot,
-        penalty_rate,
         market_duration,
-        penalty_tolerance_percent,
+        penalty_policy,
         false,
     )
     .await?;
@@ -73,8 +72,7 @@ pub async fn finalize_timeslot(
     trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
-    penalty_rate: f64,
-    penalty_tolerance_percent: f64,
+    penalty_policy: PenaltyPolicy,
 ) -> Result<bool> {
     // Only this slot has expired: never widen the window to a multi-slot market duration.
     let (processed, pending_count, _) = run_cycle(
@@ -83,9 +81,8 @@ pub async fn finalize_timeslot(
         trade_matching_address,
         execution_engine_private_key,
         timeslot,
-        penalty_rate,
         0,
-        penalty_tolerance_percent,
+        penalty_policy,
         true,
     )
     .await?;
@@ -100,19 +97,10 @@ async fn run_cycle(
     trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
-    penalty_rate: f64,
     market_duration: u64,
-    penalty_tolerance_percent: f64,
+    penalty_policy: PenaltyPolicy,
     grace_period_over: bool,
 ) -> Result<(usize, usize, bool)> {
-    anyhow::ensure!(
-        penalty_tolerance_percent.is_finite() && (0.0..=100.0).contains(&penalty_tolerance_percent),
-        "Invalid penalty tolerance percentage"
-    );
-    ensure!(
-        penalty_rate.is_finite() && penalty_rate >= 0.0,
-        "Invalid penalty rate"
-    );
     let offchain_storage_client = OffchainStorageClient::new(
         OffchainStorageTransport::from_env(),
         offchain_url,
@@ -200,8 +188,7 @@ async fn run_cycle(
             &measurements,
             &facility_owner_mapping,
             slot,
-            penalty_rate,
-            penalty_tolerance_percent,
+            penalty_policy,
         )?);
     }
     let all_measured = verifications.len() == pending_count;
