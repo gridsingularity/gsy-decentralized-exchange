@@ -580,6 +580,7 @@ dependencies = [
  "ahash",
  "base64 0.22.1",
  "bitvec",
+ "chrono",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "hex",
@@ -1455,6 +1456,7 @@ name = "e2e-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "cucumber",
  "ethers",
  "gsy-community-client",
@@ -2291,6 +2293,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake2-rfc",
+ "chrono",
  "ethers",
  "ethers-solc",
  "httpmock",
@@ -2347,6 +2350,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "envy",
  "ethers",
  "once_cell",
@@ -2366,6 +2370,7 @@ name = "gsy-matching-engine"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "ethers",
  "ethers-solc",
@@ -4223,6 +4228,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "blake2",
+ "bson",
  "chrono",
  "futures",
  "hex",

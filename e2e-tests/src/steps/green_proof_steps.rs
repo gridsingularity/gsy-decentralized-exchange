@@ -9,7 +9,7 @@
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
 //! is cleared after every scenario by `main.rs`, preserving its indexes).
 
-use primitives::utils::EPOCH_RFC3339;
+use chrono::DateTime;
 use crate::utils::test_database;
 use crate::world::{GreenProofSeed, MyWorld};
 use cucumber::{given, then, when};
@@ -29,7 +29,7 @@ use primitives::db_api_schema::profiles::{
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::{
-    timestamp_to_datetime_string, timestamp_to_string_with_padding,
+    epoch_to_datetime, epoch_to_rfc3339,
 };
 use serde_json::json;
 use std::env;
@@ -45,14 +45,6 @@ const SLOT_S: u64 = 900;
 const QUERY_RETRY_BUDGET: Duration = Duration::from_secs(60);
 const QUERY_RETRY_INTERVAL: Duration = Duration::from_secs(3);
 const REST_PATH: &str = "guarantees-of-origin";
-
-/// `2026-05-14T10:30:00+00:00`, the format of `interval_start` / `interval_end`
-/// (chrono's `to_rfc3339` of a whole-second UTC instant).
-fn rfc3339_utc(timestamp: u64) -> String {
-    // `timestamp_to_datetime_string` is `%Y-%m-%d %H:%M:%S.%f`.
-    let datetime = timestamp_to_datetime_string(timestamp);
-    format!("{}+00:00", datetime[..19].replacen(' ', "T", 1))
-}
 
 fn window_around(instant: u64) -> (u64, u64) {
     (instant - SLOT_S / 2, instant + SLOT_S / 2)
@@ -86,6 +78,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
     let now = get_current_timestamp_in_secs();
     // The last fully elapsed slot: delivered, and 900-aligned as the builder requires.
     let time_slot = now - now % SLOT_S - SLOT_S;
+    let ts = |epoch_secs| epoch_to_datetime(epoch_secs).expect("Seed time is out of range");
 
     let community_id = Uuid::new_v4().to_string();
     let seller_facility_id = format!("goo-e2e-seller-{run}");
@@ -113,7 +106,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
             community_id: seed.community_id.clone(),
             community_name: format!("GoO E2E Community {run}"),
             sites: vec![seed.site_id.clone()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         })
         .await
@@ -128,7 +121,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
                 seed.seller_facility_id.clone(),
                 seed.buyer_facility_id.clone(),
             ],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         })
         .await
@@ -144,7 +137,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         facility_name: format!("{facility_id}-name"),
         site_id: seed.site_id.clone(),
         owner_id: owner_id.clone(),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     })
     .collect::<Vec<_>>();
@@ -196,7 +189,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         db.collection::<TimeseriesSchema>("timeseries")
             .insert_one(TimeseriesSchema {
                 measurement_point: measurement_id.clone(),
-                timestamp: timestamp_to_string_with_padding(time_slot),
+                timestamp: ts(time_slot),
                 value: export_kwh,
             })
             .await
@@ -207,13 +200,13 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         .insert_one(MarketSchema {
             market_id: seed.market_id.clone(),
             community_id: seed.community_id.clone(),
-            opening_time: timestamp_to_string_with_padding(time_slot - SLOT_S),
-            closing_time: timestamp_to_string_with_padding(time_slot),
-            delivery_start_time: timestamp_to_string_with_padding(time_slot),
-            delivery_end_time: timestamp_to_string_with_padding(time_slot + SLOT_S),
+            opening_time: ts(time_slot - SLOT_S),
+            closing_time: ts(time_slot),
+            delivery_start_time: ts(time_slot),
+            delivery_end_time: ts(time_slot + SLOT_S),
             market_type: MarketType::Spot,
             matching_algorithm: MatchingAlgorithm::PayAsBid,
-            created_at: timestamp_to_string_with_padding(time_slot - SLOT_S),
+            created_at: ts(time_slot - SLOT_S),
         })
         .await
         .expect("Failed to seed the market");
@@ -225,7 +218,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
             seller: seed.seller_owner_id.clone(),
             buyer: seed.buyer_owner_id.clone(),
             market_id: seed.market_id.clone(),
-            creation_time: time_slot - SLOT_S,
+            creation_time: ts(time_slot - SLOT_S),
             offer_hash: Uuid::new_v4().to_string(),
             bid_hash: Uuid::new_v4().to_string(),
             residual_offer_id: None,
@@ -234,7 +227,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
                 selected_energy_kWh: energy_kwh,
                 energy_rate: 0.2,
             },
-            status_updated_at: Some(now),
+            status_updated_at: Some(ts(now)),
         })
         .await
         .expect("Failed to seed the executed trade");
@@ -426,11 +419,11 @@ async fn record_fields(world: &mut MyWorld, energy_quantity: f64) {
     );
     assert_eq!(
         record.time_and_quantity.interval_start,
-        rfc3339_utc(seed.time_slot)
+        epoch_to_rfc3339(seed.time_slot)
     );
     assert_eq!(
         record.time_and_quantity.interval_end,
-        rfc3339_utc(seed.time_slot + SLOT_S)
+        epoch_to_rfc3339(seed.time_slot + SLOT_S)
     );
 
     assert_eq!(

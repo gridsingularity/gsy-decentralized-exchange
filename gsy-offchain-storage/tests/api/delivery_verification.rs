@@ -1,4 +1,5 @@
-use crate::helpers::{init_app, stop_app};
+use chrono::DateTime;
+use crate::helpers::{init_app, stop_app, ts};
 use anyhow::{Context, Result};
 use ethers::{
     abi::{Abi, Tokenize},
@@ -15,7 +16,6 @@ use gsy_execution_engine::{
 use gsy_offchain_storage::{
     db::measurements_service::insert_measurements, evm_handler::OffchainStorageEvmHandler,
 };
-use primitives::utils::EPOCH_RFC3339;
 use primitives::{
     db_api_schema::{
         grid_topology::FacilitySchema, orders::OrderStatus, profiles::MeasurementSchema,
@@ -230,15 +230,15 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 facility_name: facility.clone(),
                 site_id: "site".into(),
                 owner_id: buyer,
-                valid_from: EPOCH_RFC3339.to_string(),
+                valid_from: DateTime::UNIX_EPOCH,
                 valid_until: None,
             }])
             .await?;
         measurements.push(MeasurementSchema {
             facility_id: facility,
             community_uuid: "community".into(),
-            time_slot: slot,
-            creation_time: slot,
+            time_slot: ts(slot),
+            creation_time: ts(slot),
             energy_kwh: [1.0, 1.0, 1.2][index as usize],
         });
         app.db_wrapper
@@ -248,15 +248,15 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 facility_name: seller_facility.clone(),
                 site_id: "site".into(),
                 owner_id: format!("seller-{index}"),
-                valid_from: EPOCH_RFC3339.to_string(),
+                valid_from: DateTime::UNIX_EPOCH,
                 valid_until: None,
             }])
             .await?;
         seller_measurements.push(MeasurementSchema {
             facility_id: seller_facility,
             community_uuid: "community".into(),
-            time_slot: slot,
-            creation_time: slot,
+            time_slot: ts(slot),
+            creation_time: ts(slot),
             energy_kwh: [-1.0, -0.8, -1.0][index as usize],
         });
     }
@@ -513,7 +513,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 .timestamp
                 .as_u64()
         };
-        assert_eq!(trade.status_updated_at, Some(verdict_timestamp));
+        assert_eq!(trade.status_updated_at, Some(ts(verdict_timestamp)));
         for id in [crate::helpers::entity_bytes(index + 1), crate::helpers::entity_bytes(index + 11)] {
             assert_eq!(registry.method::<_, u8>("getStatus", id)?.call().await?, 2);
             let order = app
@@ -523,7 +523,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 .await?
                 .unwrap();
             assert_eq!(order.status, OrderStatus::Executed);
-            assert_eq!(order.status_updated_at, Some(timestamp));
+            assert_eq!(order.status_updated_at, Some(ts(timestamp)));
         }
         for id in [crate::helpers::entity_bytes(index + 31), crate::helpers::entity_bytes(index + 41)] {
             assert_eq!(registry.method::<_, u8>("getStatus", id)?.call().await?, 1);
@@ -565,7 +565,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     assert_eq!(
         app.db_wrapper
             .trades()
-            .filter_trades_by_status_change(0, None, Some(TradeStatus::Executed))
+            .filter_trades_by_status_change(ts(0), None, Some(TradeStatus::Executed))
             .await?
             .len(),
         1
@@ -573,7 +573,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     assert_eq!(
         app.db_wrapper
             .trades()
-            .filter_trades_by_status_change(0, None, Some(TradeStatus::Penalized))
+            .filter_trades_by_status_change(ts(0), None, Some(TradeStatus::Penalized))
             .await?
             .len(),
         2
@@ -650,7 +650,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             app.db_wrapper
                 .facilities()
                 .store(vec![FacilitySchema {
-                    valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+                    valid_from: DateTime::UNIX_EPOCH,
                     valid_until: None,
                     facility_id: format!("meter-{owner}"),
                     facility_name: format!("meter-{owner}"),
@@ -735,8 +735,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         let measurement = |owner: &str, energy| MeasurementSchema {
             facility_id: format!("meter-{owner}"),
             community_uuid: "community".into(),
-            time_slot: slot,
-            creation_time: slot,
+            time_slot: ts(slot),
+            creation_time: ts(slot),
             energy_kwh: energy,
         };
         insert_measurements(

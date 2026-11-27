@@ -1,4 +1,4 @@
-use crate::helpers::{init_app, stop_app, TestApp};
+use crate::helpers::{init_app, stop_app, ts, TestApp};
 use ethers::{
     abi::{encode, Token},
     prelude::*,
@@ -202,7 +202,7 @@ async fn missing_actor_and_partner_survive_restart_without_blocking_unrelated_in
         Some("Partner-MiXeD")
     );
     assert_eq!(order.status, OrderStatus::Cancelled);
-    assert_eq!(order.status_updated_at, Some(902));
+    assert_eq!(order.status_updated_at, Some(ts(902)));
     // Replaying placement must not reset cancellation or duplicate the record.
     restarted.handle_event(placement).await.unwrap();
     restarted.finish_block(STREAM, 906).await.unwrap();
@@ -294,11 +294,11 @@ async fn deferred_match_penalty_and_verification_keep_chain_order_and_timestamps
         ("buyer", "seller")
     );
     assert_eq!(trade.status, TradeStatus::Penalized);
-    assert_eq!(trade.creation_time, 903);
-    assert_eq!(trade.status_updated_at, Some(904));
+    assert_eq!(trade.creation_time, ts(903));
+    assert_eq!(trade.status_updated_at, Some(ts(904)));
     for order in app.db_wrapper.orders().get_all_orders().await.unwrap() {
         assert_eq!(order.status, OrderStatus::Executed);
-        assert_eq!(order.status_updated_at, Some(905));
+        assert_eq!(order.status_updated_at, Some(ts(905)));
     }
     stop_app(app).await;
 }
@@ -418,6 +418,6 @@ async fn unresolved_market_mapping_defers_its_orders_and_expiry_only() {
         .unwrap();
     assert_eq!(order.created_by, "owner");
     assert_eq!(order.status, OrderStatus::Expired);
-    assert_eq!(order.status_updated_at, Some(910));
+    assert_eq!(order.status_updated_at, Some(ts(910)));
     stop_app(app).await;
 }

@@ -11,7 +11,7 @@ use primitives::db_api_schema::{
     orders::OrderStatus,
     trades::{DbTradeSchema, TradeStatus},
 };
-use primitives::utils::{bytes16_to_uuid_string, uuid_v4_to_bytes16};
+use primitives::utils::{bytes16_to_uuid_string, epoch_to_datetime, uuid_v4_to_bytes16};
 use std::{sync::Arc, time::Duration};
 use tokio::time::{sleep, timeout};
 abigen!(
@@ -65,7 +65,10 @@ async fn assert_order_status(
                     "Lifecycle timestamp is missing"
                 );
                 if let Some(timestamp) = timestamp {
-                    assert_eq!(order.status_updated_at, Some(timestamp));
+                    assert_eq!(
+                        order.status_updated_at,
+                        Some(epoch_to_datetime(timestamp).unwrap())
+                    );
                 }
                 return;
             }
@@ -202,8 +205,10 @@ async fn verify_matched_trade(world: &mut MyWorld) {
         .unwrap()
         .unwrap();
     let mut expected = stored;
-    expected.status_updated_at =
-        Some(trade_status_timestamp(world, trade, &TradeStatus::Matched).await);
+    expected.status_updated_at = Some(
+        epoch_to_datetime(trade_status_timestamp(world, trade, &TradeStatus::Matched).await)
+            .unwrap(),
+    );
     assert_eq!(persisted, expected);
 }
 
@@ -247,8 +252,10 @@ pub(crate) async fn assert_trade_verified(
                     .expect("Verified trade is missing from storage");
                 let mut expected = trade.clone();
                 expected.status = expected_status.clone();
-                expected.status_updated_at =
-                    Some(trade_status_timestamp(world, trade, &expected_status).await);
+                expected.status_updated_at = Some(
+                    epoch_to_datetime(trade_status_timestamp(world, trade, &expected_status).await)
+                        .unwrap(),
+                );
                 assert_eq!(
                     persisted, expected,
                     "Verification changed trade details or verdict timestamp"
@@ -268,7 +275,7 @@ pub(crate) async fn assert_trade_verified(
                             .find(|order| &order.order_id == id)
                             .unwrap()
                             .status_updated_at,
-                        Some(timestamp)
+                        Some(epoch_to_datetime(timestamp).unwrap())
                     );
                 }
                 let trade_matching = TradeMatchingContract::new(

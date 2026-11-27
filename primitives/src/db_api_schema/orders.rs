@@ -8,6 +8,10 @@
 //! breaking the current EVM integration path.
 
 use anyhow::{anyhow, Result};
+use bson::serde_helpers::{
+    chrono_datetime_as_bson_datetime, chrono_datetime_as_bson_datetime_optional,
+};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::utils::{bytes16_to_hex, hex_to_bytes16, NODE_FLOAT_SCALING_FACTOR};
@@ -25,13 +29,19 @@ pub type OrderType = OrderEnum;
 pub struct DbOrderSchema {
     pub order_id: String,
     pub status: OrderStatus,
-    /// Unix seconds of the last known status update; absent for legacy records.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_updated_at: Option<u64>,
+    /// Time of the last known status update; absent for legacy records.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub status_updated_at: Option<DateTime<Utc>>,
     pub order_type: OrderEnum,
     pub market_id: String,
-    pub time_slot: u64,
-    pub creation_time: u64,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub time_slot: DateTime<Utc>,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub creation_time: DateTime<Utc>,
     pub energy_kWh: f64,
     pub energy_rate: f64,
     /// Original off-chain owner ID; keyed pseudonyms are only used at contract boundaries.

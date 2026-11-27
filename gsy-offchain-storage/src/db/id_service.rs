@@ -12,7 +12,6 @@ use primitives::utils::{
     bytes16_to_hex, derive_onchain_id, validate_offchain_actor_id, hex_to_bytes16,
 };
 use std::ops::Deref;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub async fn init_ids(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.ids();
@@ -77,9 +76,7 @@ impl IdService {
                 doc! {"offchain_id": &offchain_id},
                 doc! {"$setOnInsert": {
                 "onchain_id": &onchain_id,
-                "creation_time": SystemTime::now()
-                    .duration_since(UNIX_EPOCH)?
-                    .as_secs() as i64
+                "creation_time": mongodb::bson::DateTime::now(),
                 }},
             )
             .upsert(true)

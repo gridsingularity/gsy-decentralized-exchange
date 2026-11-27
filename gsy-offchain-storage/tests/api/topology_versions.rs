@@ -2,19 +2,17 @@
 //! document of each id unless its `valid_until` has passed.
 
 use crate::helpers::{init_app, stop_app};
+use chrono::{DateTime, TimeDelta, Utc};
 use futures::future::join_all;
 use gsy_offchain_storage::db::grid_topology_service::NameConflict;
 use gsy_offchain_storage::db::DatabaseWrapper;
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{self, doc, Document};
 use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
 use primitives::ewds::dto::{EwdsFacilityDto, EwdsSiteDto};
 use primitives::ewds::is_invalid_event;
-use primitives::utils::{epoch_to_rfc3339, now_epoch_secs, EPOCH_RFC3339};
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
-
-const DAY: u64 = 86_400;
 
 fn facility(facility_id: &str, site_id: &str) -> FacilitySchema {
     FacilitySchema {
@@ -22,7 +20,7 @@ fn facility(facility_id: &str, site_id: &str) -> FacilitySchema {
         facility_name: format!("Facility {facility_id}"),
         site_id: site_id.to_string(),
         owner_id: "owner-1".to_string(),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -33,7 +31,7 @@ fn site(site_id: &str) -> SiteSchema {
         site_name: format!("Site {site_id}"),
         site_description: String::new(),
         facilities: vec![],
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     }
 }
@@ -68,18 +66,15 @@ async fn a_change_adds_a_document_and_an_identical_resend_adds_none() {
     let db = &app.db_wrapper;
     let facilities = db.facilities();
 
-    let before = epoch_to_rfc3339(now_epoch_secs());
+    let before = bson::DateTime::now().to_chrono();
     let stored = facilities
         .store(vec![facility("fac-1", "site-1")])
         .await
         .unwrap();
-    let after = epoch_to_rfc3339(now_epoch_secs());
+    let after = bson::DateTime::now().to_chrono();
     // valid_from is the receive time.
-    let valid_from = &stored[0].valid_from;
-    assert!(
-        &before <= valid_from && valid_from <= &after,
-        "{valid_from}"
-    );
+    let valid_from = stored[0].valid_from;
+    assert!(before <= valid_from && valid_from <= after, "{valid_from}");
     // The same content again: skipped, and the stored document is returned.
     let again = facilities
         .store(vec![facility("fac-1", "site-1")])
@@ -143,7 +138,7 @@ async fn names_must_be_unique_among_latest_entries_but_may_change_or_swap() {
     // Once fac-1 is deleted, its name is free.
     let mut gone = facility("fac-1", "site-1");
     gone.facility_name = "Facility fac-2".to_string();
-    gone.valid_until = Some(epoch_to_rfc3339(now_epoch_secs()));
+    gone.valid_until = Some(Utc::now());
     facilities.store(vec![gone]).await.unwrap();
     let mut reuse = facility("fac-3", "site-1");
     reuse.facility_name = "Facility fac-2".to_string();
@@ -167,24 +162,25 @@ async fn valid_until_hides_an_entry_from_that_time_on_and_a_resend_brings_it_bac
         .unwrap();
 
     // fac-1 is deleted at once, fac-2 is announced to go tomorrow, fac-3 in two seconds.
-    let now = now_epoch_secs();
-    let soon = now + 2;
+    // At the precision of a BSON date, so that resending the deletion is recognized.
+    let now = bson::DateTime::now().to_chrono();
+    let soon = now + TimeDelta::seconds(2);
     facilities
         .store(vec![
             deleted(&facility("fac-1", "site-1"), |f| {
-                f.valid_until = Some(epoch_to_rfc3339(now))
+                f.valid_until = Some(now)
             }),
             deleted(&facility("fac-2", "site-1"), |f| {
-                f.valid_until = Some(epoch_to_rfc3339(now + DAY))
+                f.valid_until = Some(now + TimeDelta::days(1))
             }),
             deleted(&facility("fac-3", "site-1"), |f| {
-                f.valid_until = Some(epoch_to_rfc3339(soon))
+                f.valid_until = Some(soon)
             }),
         ])
         .await
         .unwrap();
     assert_eq!(latest_facility_ids(db).await, vec!["fac-2", "fac-3"]);
-    while now_epoch_secs() < soon {
+    while Utc::now() < soon {
         sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(latest_facility_ids(db).await, vec!["fac-2"]);
@@ -193,7 +189,7 @@ async fn valid_until_hides_an_entry_from_that_time_on_and_a_resend_brings_it_bac
     let before = documents(db, "facilities").await;
     facilities
         .store(vec![deleted(&facility("fac-1", "site-1"), |f| {
-            f.valid_until = Some(epoch_to_rfc3339(now))
+            f.valid_until = Some(now)
         })])
         .await
         .unwrap();
@@ -226,7 +222,7 @@ async fn the_rest_endpoints_store_versions_and_show_only_latest_entries() {
     assert_eq!(response.status().as_u16(), 200);
     let stored: EwdsSiteDto = response.json().await.unwrap();
     // valid_from is the receive time, whatever the client sent.
-    assert_ne!(stored.valid_from.as_deref(), Some(EPOCH_RFC3339));
+    assert_ne!(stored.valid_from, Some(DateTime::UNIX_EPOCH.to_rfc3339()));
 
     for facility_id in ["fac-1", "fac-2"] {
         let response = post(
@@ -254,7 +250,7 @@ async fn the_rest_endpoints_store_versions_and_show_only_latest_entries() {
 
     // fac-2 is deleted from now on, so GET leaves it out.
     let mut gone = EwdsFacilityDto::from(facility("fac-2", "site-1"));
-    gone.valid_until = Some(epoch_to_rfc3339(now_epoch_secs()));
+    gone.valid_until = Some(Utc::now().to_rfc3339());
     assert_eq!(post("facilities", json!(gone)).await.unwrap().status(), 200);
     let listed: Vec<EwdsFacilityDto> = client
         .get(format!("{}/facilities", app.address))

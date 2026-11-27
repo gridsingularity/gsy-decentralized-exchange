@@ -5,6 +5,7 @@ pub mod id_service;
 pub mod market_service;
 pub mod measurements_service;
 mod order_service;
+mod migrations;
 pub(crate) mod pending_events;
 mod trade_service;
 

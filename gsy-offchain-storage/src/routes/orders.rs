@@ -2,6 +2,7 @@ use crate::db::DbRef;
 use crate::routes::parse_time_range;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::{Context, Error, Result};
+use chrono::{DateTime, Utc};
 use mongodb::bson::doc;
 use mongodb::error::{ErrorKind, WriteFailure};
 use primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
@@ -86,8 +87,8 @@ pub struct OrdersParameters {
 async fn filter_orders_from_db(
     db: DbRef,
     market_id: Option<String>,
-    start_time: Option<u64>,
-    end_time: Option<u64>,
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
 ) -> Result<Vec<EwdsOrderDto>, Error> {
     let orders = if market_id.is_none() && start_time.is_none() && end_time.is_none() {
         db.get_ref().orders().get_all_orders().await?

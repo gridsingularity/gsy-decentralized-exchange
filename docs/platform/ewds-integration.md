@@ -357,8 +357,8 @@ audit.
   `valid_until` to cancel the deletion or to bring the entry back.
 - Deleting a community or a site does not delete its sites or facilities.
   Delete each of them as well.
-- Times may have any RFC 3339 offset. They are stored and returned in UTC with
-  whole seconds, e.g. `2026-12-01T00:00:00+00:00`.
+- Times may have any RFC 3339 offset. They are stored as dates to the
+  millisecond and returned in UTC, e.g. `2026-12-01T00:00:00+00:00`.
 
 `POST /communities`, `POST /sites` and `POST /facilities` follow the same
 rules for one entry. They answer `409` when another valid entry uses the name,

@@ -1,10 +1,10 @@
-use crate::helpers::{init_app, stop_app, stored};
+use chrono::DateTime;
+use crate::helpers::{forget_migrations, init_app, restart, stop_app, stored};
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
 use primitives::db_api_schema::tariff::TariffSchema;
 use primitives::ewds::dto::{EwdsCommunityDto, EwdsFacilityDto, EwdsSiteDto};
-use primitives::utils::{epoch_to_rfc3339, now_epoch_secs, EPOCH_RFC3339};
 
 fn base_asset(uuid: &str, asset_type: AssetType, asset_name: &str) -> AssetSchema {
     AssetSchema {
@@ -125,7 +125,7 @@ async fn post_and_get_pilot_site() {
 async fn community_writes_preserve_exact_ids_and_reject_invalid_values() {
     let app = init_app().await;
     let mut community = EnergyCommunitySchema {
-        valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
         community_id: "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF".into(),
         community_name: "Exact".into(),
@@ -181,14 +181,14 @@ async fn post_and_get_communities() {
             community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             community_name: "Aran Islands REC".to_string(),
             sites: vec!["Aran Islands Site 1".to_string()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
         EnergyCommunitySchema {
             community_id: "22222222-2222-4222-8222-222222222222".to_string(),
             community_name: "Lugaggia Innovation Community".to_string(),
             sites: vec!["Lugaggia Site 1".to_string()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
     ];
@@ -239,14 +239,14 @@ async fn upsert_community_is_idempotent() {
             community_id: community_id.to_string(),
             community_name: "Original name".to_string(),
             sites: vec!["Original site".to_string()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
         EnergyCommunitySchema {
             community_id: community_id.to_string(),
             community_name: "Updated name".to_string(),
             sites: vec!["Updated site".to_string()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
     ] {
@@ -278,7 +278,7 @@ async fn post_community_site_facility() {
         community_id: "11111111-1111-4111-8111-111111111111".to_string(),
         community_name: "Aran Islands REC".to_string(),
         sites: vec!["Aran Islands Site 1".to_string()],
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     };
     assert_eq!(
@@ -298,7 +298,7 @@ async fn post_community_site_facility() {
         site_name: "Aran Islands Site 1".to_string(),
         site_description: "Group of 15 residential buildings.".to_string(),
         facilities: vec!["AIS1-House-1".to_string()],
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     };
     assert_eq!(
@@ -318,7 +318,7 @@ async fn post_community_site_facility() {
         facility_name: "AIS1-House-1".to_string(),
         site_id: "site 1".to_string(),
         owner_id: "owner 1".to_string(),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     };
     assert_eq!(
@@ -375,9 +375,8 @@ async fn post_and_get_tariff() {
 }
 
 #[tokio::test]
-async fn validity_fields_are_stored_as_utc_strings_and_startup_fills_a_missing_valid_from() {
-    use gsy_offchain_storage::db::grid_topology_service::init_facilities;
-    use mongodb::bson::{doc, Document};
+async fn validity_fields_are_stored_as_dates_and_startup_fills_a_missing_valid_from() {
+    use mongodb::bson::{self, doc, Document};
 
     let app = init_app().await;
     let facility = FacilitySchema::try_from(EwdsFacilityDto {
@@ -389,28 +388,26 @@ async fn validity_fields_are_stored_as_utc_strings_and_startup_fills_a_missing_v
         valid_until: Some("2026-12-02T01:00:00.5+01:00".to_string()),
     })
     .unwrap();
-    let before = epoch_to_rfc3339(now_epoch_secs());
+    let before = bson::DateTime::now();
     app.db_wrapper
         .facilities()
         .store(vec![facility])
         .await
         .unwrap();
-    let after = epoch_to_rfc3339(now_epoch_secs());
+    let after = bson::DateTime::now();
     let raw = app.db_wrapper.collection::<Document>("facilities");
     let stored = raw
         .find_one(doc! {"facility_id": "facility-1"})
         .await
         .unwrap()
         .unwrap();
-    // The receive time.
-    let valid_from = stored.get_str("valid_from").unwrap();
-    assert!(
-        before.as_str() <= valid_from && valid_from <= after.as_str(),
-        "{valid_from}"
-    );
+    // The receive time, as a date.
+    let valid_from = *stored.get_datetime("valid_from").unwrap();
+    assert!(before <= valid_from && valid_from <= after, "{valid_from}");
+    // A date in UTC, to the millisecond.
     assert_eq!(
-        stored.get_str("valid_until").unwrap(),
-        "2026-12-02T00:00:00+00:00"
+        *stored.get_datetime("valid_until").unwrap(),
+        bson::DateTime::parse_rfc3339_str("2026-12-02T00:00:00.500Z").unwrap()
     );
 
     // A document from before versioning.
@@ -422,7 +419,8 @@ async fn validity_fields_are_stored_as_utc_strings_and_startup_fills_a_missing_v
     })
     .await
     .unwrap();
-    init_facilities(&app.db_wrapper).await.unwrap();
+    forget_migrations(&app).await;
+    restart(&app).await;
     let old = app
         .db_wrapper
         .collection::<FacilitySchema>("facilities")
@@ -431,8 +429,8 @@ async fn validity_fields_are_stored_as_utc_strings_and_startup_fills_a_missing_v
         .unwrap()
         .unwrap();
     assert_eq!(
-        (old.valid_from.as_str(), old.valid_until.clone()),
-        (EPOCH_RFC3339, None)
+        (old.valid_from, old.valid_until),
+        (DateTime::UNIX_EPOCH, None)
     );
 
     // It is read like any entry, and a new version of it replaces it.
@@ -465,9 +463,6 @@ async fn validity_fields_are_stored_as_utc_strings_and_startup_fills_a_missing_v
 
 #[tokio::test]
 async fn startup_replaces_the_unique_indexes_with_one_on_id_and_valid_from() {
-    use gsy_offchain_storage::db::grid_topology_service::{
-        init_communities, init_facilities, init_sites,
-    };
     use mongodb::bson::{doc, Document};
     use mongodb::options::IndexOptions;
     use mongodb::IndexModel;
@@ -495,11 +490,10 @@ async fn startup_replaces_the_unique_indexes_with_one_on_id_and_valid_from() {
         }
     }
 
-    // Twice, as on every restart.
+    // Twice, as when the migration is repeated before it is recorded.
     for _ in 0..2 {
-        init_communities(db).await.unwrap();
-        init_sites(db).await.unwrap();
-        init_facilities(db).await.unwrap();
+        forget_migrations(&app).await;
+        restart(&app).await;
     }
 
     for (collection, index) in [

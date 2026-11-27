@@ -1,5 +1,6 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
@@ -20,10 +21,6 @@ fn build_order_identifier_filter(id: &Bson) -> mongodb::bson::Document {
         },
         _ => doc! { "_id": id.clone() },
     }
-}
-
-fn time_slot_bson(value: u64) -> Result<Bson> {
-    Ok(Bson::Int64(i64::try_from(value)?))
 }
 
 /// Create the indexes required by the Order Book Storage. Per D3.2 section 5.4,
@@ -116,8 +113,8 @@ impl OrderService {
     pub async fn filter_orders(
         &self,
         market_id: Option<String>,
-        start_time: Option<u64>,
-        end_time: Option<u64>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
     ) -> Result<Vec<DbOrderSchema>> {
         super::pending_events::ensure_ready(&self.0, market_id.as_deref()).await?;
         let mut filter_params = doc! {};
@@ -128,14 +125,20 @@ impl OrderService {
             (Some(start), Some(end)) => {
                 filter_params.insert(
                     "time_slot",
-                    doc! {"$gte": time_slot_bson(start)?, "$lt": time_slot_bson(end)?},
+                    doc! {
+                        "$gte": bson::DateTime::from_chrono(start),
+                        "$lt": bson::DateTime::from_chrono(end),
+                    },
                 );
             }
             (Some(start), None) => {
-                filter_params.insert("time_slot", doc! {"$gte": time_slot_bson(start)?});
+                filter_params.insert(
+                    "time_slot",
+                    doc! {"$gte": bson::DateTime::from_chrono(start)},
+                );
             }
             (None, Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$lt": time_slot_bson(end)?});
+                filter_params.insert("time_slot", doc! {"$lt": bson::DateTime::from_chrono(end)});
             }
             (None, None) => {}
         }
@@ -202,7 +205,7 @@ impl OrderService {
         &self,
         id: &Bson,
         status: OrderStatus,
-        status_updated_at: u64,
+        status_updated_at: DateTime<Utc>,
     ) -> Result<UpdateResult> {
         let filter = build_order_identifier_filter(id);
         match self
@@ -211,7 +214,7 @@ impl OrderService {
                 filter,
                 doc! {"$set": {
                     "status": bson::to_bson(&status)?,
-                    "status_updated_at": bson::to_bson(&status_updated_at)?,
+                    "status_updated_at": bson::DateTime::from_chrono(status_updated_at),
                 }},
             )
             .await
@@ -229,7 +232,7 @@ impl OrderService {
         &self,
         order_id: &str,
         partially_filled: bool,
-        block_timestamp: u64,
+        block_timestamp: DateTime<Utc>,
     ) -> Result<()> {
         let status = if partially_filled {
             OrderStatus::PartiallyFilled
@@ -244,7 +247,7 @@ impl OrderService {
             },
             doc! {"$set": {
                 "status": bson::to_bson(&status)?,
-                "status_updated_at": bson::to_bson(&block_timestamp)?,
+                "status_updated_at": bson::DateTime::from_chrono(block_timestamp),
             }},
         ).await?;
         let order = self
@@ -261,7 +264,11 @@ impl OrderService {
     }
 
     /// Complete a consumed order only, preserving the timestamp on event retries.
-    pub async fn mark_executed(&self, order_id: &str, block_timestamp: u64) -> Result<()> {
+    pub async fn mark_executed(
+        &self,
+        order_id: &str,
+        block_timestamp: DateTime<Utc>,
+    ) -> Result<()> {
         self.0.update_one(
             doc! {
                 "order_id": order_id,
@@ -269,7 +276,7 @@ impl OrderService {
             },
             doc! {"$set": {
                 "status": bson::to_bson(&OrderStatus::Executed)?,
-                "status_updated_at": bson::to_bson(&block_timestamp)?,
+                "status_updated_at": bson::DateTime::from_chrono(block_timestamp),
             }},
         ).await?;
         let order = self
@@ -287,7 +294,7 @@ impl OrderService {
     pub async fn expire_market_orders(
         &self,
         market_id: &str,
-        block_timestamp: u64,
+        block_timestamp: DateTime<Utc>,
     ) -> Result<UpdateResult> {
         match self
             .0
@@ -298,7 +305,7 @@ impl OrderService {
                 },
                 doc! {"$set": {
                     "status": bson::to_bson(&OrderStatus::Expired)?,
-                    "status_updated_at": bson::to_bson(&block_timestamp)?,
+                    "status_updated_at": bson::DateTime::from_chrono(block_timestamp),
                 }},
             )
             .await

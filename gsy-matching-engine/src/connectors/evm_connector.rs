@@ -1,6 +1,7 @@
 use crate::algorithms::{MatchOrders, PayAsClearPricing};
 use crate::models::{Attributes, BidOfferMatch, MatchType, MatchingData, Order, Requirements};
 use anyhow::{anyhow, Context, Error, Result};
+use chrono::{DateTime, Utc};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
@@ -12,7 +13,9 @@ use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::{current_unix_time, matching_block_interval, ClearingSchedule};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    bytes16_to_uuid_string, derive_onchain_id, validate_offchain_actor_id, normalize_uuid, hex_to_bytes16, uuid_v4_to_bytes16, rfc3339_to_epoch, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_uuid_string, datetime_to_epoch, derive_onchain_id, hex_to_bytes16, normalize_uuid,
+    rfc3339_to_datetime, uuid_v4_to_bytes16, validate_offchain_actor_id,
+    NODE_FLOAT_SCALING_FACTOR,
 };
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -357,8 +360,8 @@ async fn discover_markets(
             }
         };
         match (
-            market.opening_time.trim().parse::<u64>(),
-            market.closing_time.trim().parse::<u64>(),
+            datetime_to_epoch(&market.opening_time),
+            datetime_to_epoch(&market.closing_time),
         ) {
             (Ok(opening_time), Ok(closing_time)) => {
                 info!(
@@ -570,7 +573,7 @@ async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> 
 async fn prepare_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> {
     let mut open_bids: Vec<Order> = Vec::new();
     let mut open_offers: Vec<Order> = Vec::new();
-    let mut books: BTreeMap<(String, u64), Vec<DbOrderSchema>> = BTreeMap::new();
+    let mut books: BTreeMap<(String, DateTime<Utc>), Vec<DbOrderSchema>> = BTreeMap::new();
     let mut excluded = HashSet::new();
     for dto in body {
         if matches!(order_status_from_ewds(&dto.order_status), Ok(status) if status != OrderStatus::Submitted)
@@ -587,7 +590,7 @@ async fn prepare_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders
                     dto.market_id
                 )
             })?;
-        let time_slot = rfc3339_to_epoch(&dto.time_slot).ok();
+        let time_slot = rfc3339_to_datetime(&dto.time_slot).ok();
         let order_id = dto.order_id.clone();
         match DbOrderSchema::try_from(dto) {
             Ok(mut order) => {
@@ -617,7 +620,7 @@ async fn prepare_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders
             match convert_db_order_to_canonical(&db_order) {
                 Ok(order) => converted.push((order, db_order)),
                 Err(error) => {
-                    error!(order_id = %db_order.order_id, %market_id, time_slot, %error, "Excluding book with invalid canonical order");
+                    error!(order_id = %db_order.order_id, %market_id, %time_slot, %error, "Excluding book with invalid canonical order");
                     converted.clear();
                     break;
                 }
@@ -737,6 +740,8 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     let order_id = normalize_entity_id("order_id", &order.order_id)?;
     let market_id = normalize_entity_id("market_id", &order.market_id)?;
     let created_by = validate_offchain_actor_id(&order.created_by)?;
+    let time_slot = datetime_to_epoch(&order.time_slot)?;
+    let creation_time = datetime_to_epoch(&order.creation_time)?;
     Ok(match order.order_type {
         OrderEnum::Bid => Order {
             created_by,
@@ -744,8 +749,8 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             order_type: OrderEnum::Bid,
             status: order.status.clone(),
             market_id,
-            time_slot: order.time_slot,
-            creation_time: order.creation_time,
+            time_slot,
+            creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             requirements: convert_requirements(order.requirements.as_ref())?,
@@ -757,8 +762,8 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             status: order.status.clone(),
             created_by,
             market_id,
-            time_slot: order.time_slot,
-            creation_time: order.creation_time,
+            time_slot,
+            creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             requirements: convert_requirements(order.requirements.as_ref())?,
@@ -791,8 +796,8 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         order_id: parse_bytes16_field("order_id", order.order_id.as_str())?,
         created_by: hex_to_bytes16(&derive_onchain_id(&validate_offchain_actor_id(&order.created_by)?)).expect("actor hash is bytes16"),
         market_id: parse_bytes16_field("market_id", order.market_id.as_str())?,
-        time_slot: order.time_slot,
-        creation_time: order.creation_time,
+        time_slot: datetime_to_epoch(&order.time_slot)?,
+        creation_time: datetime_to_epoch(&order.creation_time)?,
         energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         energy_source_preference: metadata.energy_source_preference,

@@ -1,4 +1,4 @@
-use primitives::utils::EPOCH_RFC3339;
+use chrono::DateTime;
 use crate::steps::trade_steps::{
     align_to_matching_window, market_id_as_hex, mine_until_matching_block, query_orders_for_market,
     wait_for_order_in_offchain_storage, OrderRegistryContract,
@@ -14,7 +14,9 @@ use primitives::ewds::dto::{
     EwdsTradeDto,
 };
 use primitives::ewds::{EwdsClient, EwdsClientConfig, EwdsEventType};
-use primitives::utils::{bytes16_to_uuid_string, epoch_to_rfc3339, uuid_v4_to_bytes16};
+use primitives::utils::{
+    bytes16_to_uuid_string, epoch_to_datetime, epoch_to_rfc3339, uuid_v4_to_bytes16,
+};
 use std::time::Duration;
 use tokio::{
     sync::mpsc,
@@ -220,7 +222,7 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
             community_id: world.secondary_community_id.clone(),
             community_name: format!("E2E Secondary Community {}", world.secondary_community_id),
             sites: vec!["site-12346".into()],
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         },
     )
@@ -231,7 +233,7 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
             facility_name: foreign_facility.clone(),
             site_id: "site-12346".into(),
             owner_id: foreign_owner.clone(),
-            valid_from: EPOCH_RFC3339.to_string(),
+            valid_from: DateTime::UNIX_EPOCH,
             valid_until: None,
         }])
         .await;
@@ -312,7 +314,7 @@ async fn publish_events(world: &mut MyWorld) {
         site_name: format!("E2E Event Site {}", suffix),
         site_description: "Site sent by the events scenario".to_string(),
         facilities: vec![facility_id.clone()],
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     };
     let facility = FacilitySchema {
@@ -320,7 +322,7 @@ async fn publish_events(world: &mut MyWorld) {
         facility_name: format!("E2E Event Facility {}", suffix),
         site_id: site.site_id.clone(),
         owner_id: format!("e2e-event-owner-{}", suffix),
-        valid_from: EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
     };
     let (last_timeslot, _) = get_last_and_next_timeslot();
@@ -329,8 +331,8 @@ async fn publish_events(world: &mut MyWorld) {
         .map(|(time_slot, energy_kwh)| MeasurementSchema {
             facility_id: facility_id.clone(),
             community_uuid: world.community_id.clone(),
-            time_slot,
-            creation_time: time_slot + 60,
+            time_slot: epoch_to_datetime(time_slot).unwrap(),
+            creation_time: epoch_to_datetime(time_slot + 60).unwrap(),
             energy_kwh,
         })
         .collect::<Vec<_>>();
@@ -457,7 +459,7 @@ async fn verify_site_and_facility(world: &mut MyWorld) {
             .expect("Failed to parse sites")
             .into_iter()
             .map(|dto| SiteSchema {
-                valid_from: EPOCH_RFC3339.to_string(),
+                valid_from: DateTime::UNIX_EPOCH,
                 ..SiteSchema::try_from(dto).expect("Invalid site")
             })
             .collect::<Vec<_>>();
@@ -472,7 +474,7 @@ async fn verify_site_and_facility(world: &mut MyWorld) {
             .expect("Failed to parse facilities")
             .into_iter()
             .map(|dto| FacilitySchema {
-                valid_from: EPOCH_RFC3339.to_string(),
+                valid_from: DateTime::UNIX_EPOCH,
                 ..FacilitySchema::try_from(dto).expect("Invalid facility")
             })
             .collect::<Vec<_>>();

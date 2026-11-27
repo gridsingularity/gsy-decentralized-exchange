@@ -11,8 +11,8 @@ use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto, FacilityMarketValid
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    derive_onchain_id, epoch_to_rfc3339, validate_offchain_actor_id, normalize_uuid,
-    hex_to_bytes16, uuid_v4_to_bytes16, NODE_FLOAT_SCALING_FACTOR,
+    datetime_to_epoch, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16, normalize_uuid,
+    uuid_v4_to_bytes16, validate_offchain_actor_id, NODE_FLOAT_SCALING_FACTOR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -586,8 +586,8 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
         hex_to_bytes16(&order.created_by).filter(|id| *id != [0; 16])
             .context("createdBy must be an on-chain actor hash")?,
         uuid_v4_to_bytes16(&order.market_id).context("Invalid marketId")?,
-        order.time_slot,
-        order.creation_time,
+        datetime_to_epoch(&order.time_slot)?,
+        datetime_to_epoch(&order.creation_time)?,
         (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         metadata.energy_source_preference,

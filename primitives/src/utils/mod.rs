@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use chrono::{prelude::DateTime, TimeZone, Utc};
+use chrono::{prelude::DateTime, SubsecRound, Utc};
 use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -70,12 +70,6 @@ pub fn profile_measurement_id(
     )
 }
 
-pub fn timestamp_to_datetime_string(timestamp: u64) -> String {
-    let datetime = DateTime::<Utc>::from_timestamp(timestamp as i64, 0).unwrap();
-    // Formats the combined date and time with the specified format string.
-    datetime.format("%Y-%m-%d %H:%M:%S.%f").to_string()
-}
-
 pub fn read_env_or<T: FromStr>(variable_name: &str, default_value: T) -> T {
     env::var(variable_name)
         .ok()
@@ -83,37 +77,59 @@ pub fn read_env_or<T: FromStr>(variable_name: &str, default_value: T) -> T {
         .unwrap_or(default_value)
 }
 
-pub fn timestamp_to_string_with_padding(timestamp: u64) -> String {
-    format!("{:020}", timestamp)
-}
-
-pub fn string_to_timestamp(timestamp_string: &str) -> Result<u64> {
-    let ts: u64 = timestamp_string.parse()?;
-    Ok(ts)
-}
-
-/// Format epoch seconds as an ISO 8601 / RFC 3339 string with timezone (UTC, `+00:00`).
+/// Format epoch seconds as an ISO 8601 / RFC 3339 string in UTC (`+00:00`), the same
+/// form as `DateTime::<Utc>::to_rfc3339`, which the DTOs use. Empty if out of range.
 pub fn epoch_to_rfc3339(epoch_secs: u64) -> String {
-    Utc.timestamp_opt(epoch_secs as i64, 0)
-        .single()
-        .map(|dt| dt.to_rfc3339())
+    epoch_to_datetime(epoch_secs)
+        .map(|datetime| datetime.to_rfc3339())
         .unwrap_or_default()
 }
 
 pub fn rfc3339_to_epoch(value: &str) -> Result<u64> {
-    let parsed = DateTime::parse_from_rfc3339(value)
-        .map_err(|e| anyhow!("invalid ISO 8601 timestamp '{}': {}", value, e))?;
-    Ok(parsed.timestamp() as u64)
-}
-pub fn opt_rfc3339_to_epoch(value: Option<&str>) -> Result<Option<u64>> {
-    value.map(rfc3339_to_epoch).transpose()
+    datetime_to_epoch(&rfc3339_to_datetime(value)?)
 }
 
-/// The current time in unix seconds.
-pub fn now_epoch_secs() -> u64 {
-    Utc::now().timestamp().max(0) as u64
+/// Parses an ISO 8601 / RFC 3339 string with any offset into UTC, truncated to milliseconds,
+/// the precision of a BSON date, so that a parsed time equals its stored value.
+pub fn rfc3339_to_datetime(value: &str) -> Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|parsed| parsed.with_timezone(&Utc).trunc_subsecs(3))
+        .map_err(|e| anyhow!("invalid ISO 8601 timestamp '{}': {}", value, e))
+}
+pub fn opt_rfc3339_to_datetime(value: Option<&str>) -> Result<Option<DateTime<Utc>>> {
+    value.map(rfc3339_to_datetime).transpose()
 }
 
-/// `valid_from` of an entry whose receive time is unknown: `epoch_to_rfc3339(0)`, the oldest
-/// possible.
-pub const EPOCH_RFC3339: &str = "1970-01-01T00:00:00+00:00";
+/// Serde for a UTC date-time as an RFC 3339 string: written like `to_rfc3339` (`+00:00`), the
+/// form of the DTOs, and read with `rfc3339_to_datetime`.
+pub mod rfc3339 {
+    use chrono::{DateTime, Utc};
+    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        time: &DateTime<Utc>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&time.to_rfc3339())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<DateTime<Utc>, D::Error> {
+        super::rfc3339_to_datetime(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+/// Epoch seconds (e.g. a block timestamp) as a UTC date-time.
+pub fn epoch_to_datetime(epoch_secs: u64) -> Result<DateTime<Utc>> {
+    i64::try_from(epoch_secs)
+        .ok()
+        .and_then(|secs| DateTime::from_timestamp(secs, 0))
+        .ok_or_else(|| anyhow!("epoch timestamp {} is out of range", epoch_secs))
+}
+
+/// Whole epoch seconds of a UTC date-time; fails for times before 1970.
+pub fn datetime_to_epoch(datetime: &DateTime<Utc>) -> Result<u64> {
+    u64::try_from(datetime.timestamp())
+        .map_err(|_| anyhow!("{} is before the Unix epoch", datetime.to_rfc3339()))
+}

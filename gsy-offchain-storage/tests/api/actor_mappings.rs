@@ -1,4 +1,5 @@
-use crate::helpers::{init_app, stop_app};
+use chrono::DateTime;
+use crate::helpers::{init_app, stop_app, ts};
 use gsy_offchain_storage::ewds_event_handler::handle_event;
 use mongodb::bson::doc;
 use primitives::{
@@ -119,7 +120,7 @@ async fn topology_registers_actor_mappings_over_http_and_ewds_before_orders_exis
             db.facilities().get().await.unwrap()[0].owner_id,
             "new-owner"
         );
-        facility.valid_until = Some(primitives::utils::EPOCH_RFC3339.to_string());
+        facility.valid_until = Some(DateTime::UNIX_EPOCH);
         db.facilities().store(vec![facility]).await.unwrap();
         assert!(db.facilities().get().await.unwrap().is_empty());
         assert!(client
@@ -206,11 +207,11 @@ async fn mapping_failure_does_not_publish_topology_or_replace_existing_mapping()
     let existing = IdMappingSchema {
         offchain_id: "owner".into(),
         onchain_id: derive_onchain_id("different-owner"),
-        creation_time: 1,
+        creation_time: ts(1),
     };
     db.ids().insert_one(&existing).await.unwrap();
     let facility = FacilitySchema {
-        valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
         facility_id: "LIC01".into(),
         facility_name: "PV".into(),
@@ -249,7 +250,7 @@ async fn community_mapping_must_succeed_before_topology_is_written() {
     let app = init_app().await;
     let db = &app.db_wrapper;
     let community = EnergyCommunitySchema {
-        valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+        valid_from: DateTime::UNIX_EPOCH,
         valid_until: None,
         community_id: "Community-MiXeD/LIC01".into(),
         community_name: "Community".into(),
@@ -258,7 +259,7 @@ async fn community_mapping_must_succeed_before_topology_is_written() {
     let wrong_mapping = IdMappingSchema {
         offchain_id: community.community_id.clone(),
         onchain_id: derive_onchain_id("different-community"),
-        creation_time: 1,
+        creation_time: ts(1),
     };
     db.ids().insert_one(&wrong_mapping).await.unwrap();
     for _ in 0..2 {

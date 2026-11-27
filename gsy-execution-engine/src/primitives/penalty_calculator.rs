@@ -1,5 +1,6 @@
 use super::penalty_policy::PenaltyPolicy;
 use anyhow::{ensure, Result};
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::{
     profiles::MeasurementSchema,
     trades::{DbTradeSchema, TradeStatus},
@@ -37,7 +38,7 @@ pub fn compute_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
-    delivery_slot: u64,
+    delivery_slot: DateTime<Utc>,
     penalty_policy: PenaltyPolicy,
 ) -> Result<Vec<DeliveryVerification>> {
     delivery_verifications(
@@ -58,7 +59,7 @@ pub fn compute_final_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
-    delivery_slot: u64,
+    delivery_slot: DateTime<Utc>,
     penalty_policy: PenaltyPolicy,
 ) -> Result<Vec<DeliveryVerification>> {
     delivery_verifications(
@@ -75,7 +76,7 @@ fn delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
-    delivery_slot: u64,
+    delivery_slot: DateTime<Utc>,
     penalty_policy: PenaltyPolicy,
     grace_period_over: bool,
 ) -> Result<Vec<DeliveryVerification>> {

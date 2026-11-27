@@ -8,12 +8,20 @@ pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
     let known_ids = facility_ids.map(str::to_owned);
     Mock::given(method("GET"))
         .and(path("/facilities"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            facility_ids.iter().enumerate().map(|(index, facility_id)| json!({
-                "facility_id": facility_id, "facility_name": facility_id,
-                "site_id": "site-1", "owner_id": format!("owner-{}", index + 1)
-            })).collect::<Vec<_>>(),
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                facility_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, facility_id)| {
+                        json!({
+                            "facility_id": facility_id, "facility_name": facility_id,
+                            "site_id": "site-1", "owner_id": format!("owner-{}", index + 1)
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        )
         .mount(&server)
         .await;
     Mock::given(method("POST"))

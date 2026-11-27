@@ -3,13 +3,13 @@ use crate::db::DbRef;
 use crate::routes::parse_time_range;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::profiles::{
     ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use primitives::utils::{
-    validate_offchain_actor_id, profile_measurement_id, timestamp_to_string_with_padding,
-};
+use primitives::ewds::dto::TimeseriesDto;
+use primitives::utils::{profile_measurement_id, validate_offchain_actor_id};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -23,10 +23,6 @@ pub struct ProfilesParameters {
     start_time: Option<String>,
     #[serde(alias = "endTime")]
     end_time: Option<String>,
-}
-
-fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
-    timestamp.parse::<u64>().ok()
 }
 
 fn measurement_point_from_forecast(forecast: &ForecastSchema) -> MeasurementPointSchema {
@@ -55,7 +51,7 @@ fn forecast_timeseries(forecast: &ForecastSchema) -> TimeseriesSchema {
             forecast.community_uuid.as_str(),
             forecast.facility_id.as_str(),
         ),
-        timestamp: timestamp_to_string_with_padding(forecast.time_slot),
+        timestamp: forecast.time_slot,
         value: forecast.energy_kwh,
     }
 }
@@ -65,8 +61,8 @@ async fn fetch_profile_values(
     point_type: MeasurementPointType,
     facility_id: Option<String>,
     community_uuid: Option<String>,
-    start_time: Option<u64>,
-    end_time: Option<u64>,
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
 ) -> Result<Vec<(MeasurementPointSchema, TimeseriesSchema)>> {
     let points = db
         .measurement_points()
@@ -84,11 +80,7 @@ async fn fetch_profile_values(
 
     let values = db
         .timeseries()
-        .filter_values(
-            None,
-            start_time.map(timestamp_to_string_with_padding),
-            end_time.map(timestamp_to_string_with_padding),
-        )
+        .filter_values(None, start_time, end_time)
         .await?;
 
     Ok(values
@@ -163,15 +155,12 @@ pub async fn get_measurements(
         Ok(values) => HttpResponse::Ok().json(
             values
                 .into_iter()
-                .filter_map(|(point, value)| {
-                    let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
-                    Some(MeasurementSchema {
-                        facility_id: point.asset_name,
-                        community_uuid: point.datasource_name.unwrap_or_default(),
-                        time_slot,
-                        creation_time: time_slot,
-                        energy_kwh: value.value,
-                    })
+                .map(|(point, value)| MeasurementSchema {
+                    facility_id: point.asset_name,
+                    community_uuid: point.datasource_name.unwrap_or_default(),
+                    time_slot: value.timestamp,
+                    creation_time: value.timestamp,
+                    energy_kwh: value.value,
                 })
                 .collect::<Vec<_>>(),
         ),
@@ -257,16 +246,13 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
         Ok(values) => HttpResponse::Ok().json(
             values
                 .into_iter()
-                .filter_map(|(point, value)| {
-                    let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
-                    Some(ForecastSchema {
-                        facility_id: point.asset_name,
-                        community_uuid: point.datasource_name.unwrap_or_default(),
-                        time_slot,
-                        creation_time: time_slot,
-                        energy_kwh: value.value,
-                        confidence: 1.0,
-                    })
+                .map(|(point, value)| ForecastSchema {
+                    facility_id: point.asset_name,
+                    community_uuid: point.datasource_name.unwrap_or_default(),
+                    time_slot: value.timestamp,
+                    creation_time: value.timestamp,
+                    energy_kwh: value.value,
+                    confidence: 1.0,
                 })
                 .collect::<Vec<_>>(),
         ),
@@ -324,30 +310,40 @@ pub struct TimeseriesQuery {
     end_time: Option<String>,
 }
 
-pub async fn post_timeseries(timeseries: Json<Vec<TimeseriesSchema>>, db: DbRef) -> impl Responder {
-    match db
-        .get_ref()
-        .timeseries()
-        .insert_values(timeseries.to_vec())
-        .await
+pub async fn post_timeseries(timeseries: Json<Vec<TimeseriesDto>>, db: DbRef) -> impl Responder {
+    let values = match timeseries
+        .into_inner()
+        .into_iter()
+        .map(TimeseriesSchema::try_from)
+        .collect::<Result<Vec<_>>>()
     {
+        Ok(values) => values,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
+    match db.get_ref().timeseries().insert_values(values).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 
 pub async fn get_timeseries(db: DbRef, query: Query<TimeseriesQuery>) -> impl Responder {
+    let (start_time, end_time) =
+        match parse_time_range(query.start_time.as_deref(), query.end_time.as_deref()) {
+            Ok(range) => range,
+            Err(response) => return response,
+        };
     match db
         .get_ref()
         .timeseries()
-        .filter_values(
-            query.measurement_point.clone(),
-            query.start_time.clone(),
-            query.end_time.clone(),
-        )
+        .filter_values(query.measurement_point.clone(), start_time, end_time)
         .await
     {
-        Ok(values) => HttpResponse::Ok().json(values),
+        Ok(values) => HttpResponse::Ok().json(
+            values
+                .into_iter()
+                .map(TimeseriesDto::from)
+                .collect::<Vec<_>>(),
+        ),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()

@@ -120,8 +120,8 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
         .trades()
         .filter_trades(
             market_id,
-            range.map(|(start, _)| start),
-            range.map(|(_, end)| end),
+            range.as_ref().map(|range| range.start),
+            range.map(|range| range.end),
         )
         .await
     {

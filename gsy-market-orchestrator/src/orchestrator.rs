@@ -5,8 +5,8 @@ use primitives::offchain_storage::CommunityProvider;
 use primitives::{
     constants::GLOBAL_CONSTANTS,
     utils::{
-        bytes16_to_uuid_string, derive_onchain_id, validate_offchain_actor_id, hex_to_bytes16,
-        timestamp_to_datetime_string,
+        bytes16_to_uuid_string, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16,
+        validate_offchain_actor_id,
     },
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -158,9 +158,9 @@ where
             debug!(
                 "Market {} for delivery at {} is missing. Opens {}, closes {}.",
                 bytes16_to_uuid_string(market.market_id),
-                timestamp_to_datetime_string(market.delivery_start_time),
-                timestamp_to_datetime_string(market.opening_time),
-                timestamp_to_datetime_string(market.closing_time)
+                epoch_to_rfc3339(market.delivery_start_time),
+                epoch_to_rfc3339(market.opening_time),
+                epoch_to_rfc3339(market.closing_time)
             );
             new_markets.push(market);
         }
